@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from keyboards.inline import *
 from services.vacancy_parser import parse_hh_vacancy
 
-router = Router()   # <-- ВОТ ЭТО БЫЛО ПРОПУЩЕНО
+router = Router()
 
 class SetupStates(StatesGroup):
     waiting_for_language = State()
@@ -23,19 +23,10 @@ async def safe_edit(msg: types.Message, text: str, reply_markup=None):
     except TelegramBadRequest:
         pass
 
-# ---------- НОВЫЙ ОБРАБОТЧИК ВХОДА В РЕЖИМ СОБЕСЕДОВАНИЯ ----------
-@router.callback_query(F.data == "mode_interview")
-async def start_interview_mode(call: types.CallbackQuery, state: FSMContext):
+async def start_interview_setup(message: types.Message, state: FSMContext):
+    """Запуск цепочки настройки собеседования (вызывается из social_sim)"""
     await state.clear()
-    await call.message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
-    await state.set_state(SetupStates.waiting_for_language)
-    await call.answer()
-# --------------------------------------------------------------------
-
-@router.message(F.text == "🚀 Начать собеседование")
-async def start_setup(msg: types.Message, state: FSMContext):
-    await state.clear()
-    await msg.answer("🌍 Выберите язык:", reply_markup=language_kb())
+    await message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
     await state.set_state(SetupStates.waiting_for_language)
 
 @router.callback_query(SetupStates.waiting_for_language, F.data.startswith("lang_"))
@@ -94,7 +85,7 @@ async def receive_vacancy_url(msg: types.Message, state: FSMContext):
         vac = await parse_hh_vacancy(msg.text)
         await state.update_data(vacancy_text=f"{vac['title']}\n{vac['description']}")
         await msg.answer(f"✅ Вакансия «{vac['title']}» загружена.")
-    except Exception as e:
+    except Exception:
         await msg.answer("⚠️ Не удалось загрузить вакансию. Продолжим без неё.")
     await msg.answer("📄 Отправьте текст резюме или нажмите Пропустить:", reply_markup=resume_skip_kb())
     await state.set_state(SetupStates.waiting_for_resume)

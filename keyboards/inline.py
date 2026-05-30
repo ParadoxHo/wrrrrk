@@ -1,0 +1,46 @@
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def language_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")],
+        [InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")]
+    ])
+
+def persona_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 Добрый HR", callback_data="pers_hr")],
+        [InlineKeyboardButton(text="🟡 Душный Тимлид", callback_data="pers_tech")],
+        [InlineKeyboardButton(text="🔴 Стрессовый Босс", callback_data="pers_boss")]
+    ])
+
+def difficulty_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👶 Junior", callback_data="jun")],
+        [InlineKeyboardButton(text="👨‍💻 Middle", callback_data="mid")],
+        [InlineKeyboardButton(text="🧙‍♂️ Senior/Expert", callback_data="sen")]
+    ])
+
+def question_count_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="5", callback_data="q_5"),
+         InlineKeyboardButton(text="10", callback_data="q_10")],
+        [InlineKeyboardButton(text="15", callback_data="q_15"),
+         InlineKeyboardButton(text="20", callback_data="q_20")]
+    ])
+
+def resume_skip_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_resume")]
+    ])
+
+def vacancy_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Вставить ссылку на вакансию", callback_data="add_vacancy")],
+        [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_vacancy")]
+    ])
+
+def interview_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💡 Подсказка", callback_data="hint"),
+         InlineKeyboardButton(text="🛑 Завершить", callback_data="stop_interview")]
+    ])

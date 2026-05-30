@@ -14,6 +14,7 @@ class SocialSimStates(StatesGroup):
     waiting_for_custom_desc = State()
     adding_persona = State()
     confirm_personas = State()
+    waiting_for_date_gender = State()       # выбор пола на свидании
 
 # ------------------- 10 БАЗОВЫХ СЦЕНАРИЕВ -------------------
 SCENARIOS = {
@@ -86,10 +87,8 @@ SCENARIOS = {
     },
     "date": {
         "name": "💕 Первое свидание",
-        "description": "Романтическая встреча в кафе. Вы и ваш собеседник.",
-        "personas": [
-            {"name": "Девушка/парень", "role": "system", "content": "Обаятельный, но с чувством юмора. Задаёт вопросы о хобби, работе, мечтах. Лёгкий флирт."}
-        ]
+        "description": "Романтическая встреча в кафе. Вы и ваш собеседник (пол можно выбрать).",
+        "personas": []   # персонаж будет создан после выбора пола
     },
     "reprimand": {
         "name": "⚠️ Воспитательная беседа",
@@ -108,6 +107,12 @@ def custom_persona_kb():
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_custom")]
     ])
 
+def date_gender_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👩 Девушка", callback_data="date_girl"),
+         InlineKeyboardButton(text="👨 Парень", callback_data="date_guy")]
+    ])
+
 # ------------------- Обработчик каталога: выбор сценария -------------------
 @router.callback_query(F.data == "scenario_interview")
 async def interview_chosen(call: types.CallbackQuery, state: FSMContext):
@@ -119,6 +124,15 @@ async def interview_chosen(call: types.CallbackQuery, state: FSMContext):
 async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     key = call.data.split("_", 1)[1]
     if key == "interview":
+        return
+
+    if key == "date":
+        await call.message.edit_text(
+            "💕 Выберите пол вашего собеседника:",
+            reply_markup=date_gender_kb()
+        )
+        await state.set_state(SocialSimStates.waiting_for_date_gender)
+        await call.answer()
         return
 
     sc = SCENARIOS.get(key)
@@ -142,6 +156,40 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
         f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
         f"Участники:\n{persona_list}\n\n"
+        "Начинайте беседу. Ваше первое сообщение?\n"
+        "ℹ️ Для завершения используйте /finish."
+    )
+    await state.set_state(SocialSimStates.in_progress)
+    await call.answer()
+
+# ------------------- Выбор пола для свидания -------------------
+@router.callback_query(SocialSimStates.waiting_for_date_gender, F.data.startswith("date_"))
+async def date_gender_chosen(call: types.CallbackQuery, state: FSMContext):
+    gender = call.data
+    if gender == "date_girl":
+        persona_name = "Девушка"
+        persona_content = "Обаятельная, с чувством юмора. Задаёт вопросы о хобби, работе, мечтах. Лёгкий флирт."
+    else:
+        persona_name = "Парень"
+        persona_content = "Обаятельный, с чувством юмора. Задаёт вопросы о хобби, работе, мечтах. Лёгкий флирт."
+
+    sc = SCENARIOS["date"]
+    persona = {"name": persona_name, "role": "system", "content": persona_content}
+
+    system_messages = [
+        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Не добавляй своё имя перед ответом."},
+        {"role": "system", "content": f"[Роль: {persona_name}] {persona_content} Не добавляй своё имя в начале реплики."}
+    ]
+
+    await state.update_data(
+        scenario="date",
+        personas=[persona],
+        history=system_messages
+    )
+
+    await call.message.edit_text(
+        f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
+        f"Собеседник: {persona_name}\n\n"
         "Начинайте беседу. Ваше первое сообщение?\n"
         "ℹ️ Для завершения используйте /finish."
     )
@@ -234,14 +282,13 @@ async def cancel_custom(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# ------------------- Игровой процесс (без повторов /finish) -------------------
+# ------------------- Игровой процесс -------------------
 @router.message(SocialSimStates.in_progress, F.text)
 async def handle_social_message(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     history = data["history"]
     personas = data["personas"]
 
-    # Сохраняем сообщение пользователя без префикса
     user_msg = msg.text
     history.append({"role": "user", "content": user_msg})
 
@@ -253,18 +300,14 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         try:
             reply = await ai_request(persona_history)
         except Exception:
-            reply = "..."  # промолчал
-        # Сохраняем ответ без префикса в историю
+            reply = "..."
         history.append({"role": "assistant", "content": reply})
-        # Для вывода добавляем имя персонажа
         responses.append(f"**{p['name']}:** {reply}")
 
     await state.update_data(history=history)
 
     for resp in responses:
         await msg.answer(resp, parse_mode="Markdown")
-
-    # Никаких надоедливых напоминаний – пользователь знает о /finish
 
 # ------------------- Завершение -------------------
 @router.message(Command("finish"), SocialSimStates.in_progress)

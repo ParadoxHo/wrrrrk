@@ -1,9 +1,3 @@
-@router.callback_query(F.data == "mode_interview")
-async def start_interview_mode(call: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
-    await state.set_state(SetupStates.waiting_for_language)
-    await call.answer()
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -11,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from keyboards.inline import *
 from services.vacancy_parser import parse_hh_vacancy
 
-router = Router()
+router = Router()   # <-- ВОТ ЭТО БЫЛО ПРОПУЩЕНО
 
 class SetupStates(StatesGroup):
     waiting_for_language = State()
@@ -28,6 +22,15 @@ async def safe_edit(msg: types.Message, text: str, reply_markup=None):
         await msg.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest:
         pass
+
+# ---------- НОВЫЙ ОБРАБОТЧИК ВХОДА В РЕЖИМ СОБЕСЕДОВАНИЯ ----------
+@router.callback_query(F.data == "mode_interview")
+async def start_interview_mode(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
+    await state.set_state(SetupStates.waiting_for_language)
+    await call.answer()
+# --------------------------------------------------------------------
 
 @router.message(F.text == "🚀 Начать собеседование")
 async def start_setup(msg: types.Message, state: FSMContext):

@@ -1,3 +1,9 @@
+@router.callback_query(F.data == "mode_interview")
+async def start_interview_mode(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
+    await state.set_state(SetupStates.waiting_for_language)
+    await call.answer()
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State

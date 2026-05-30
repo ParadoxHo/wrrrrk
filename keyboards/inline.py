@@ -44,3 +44,9 @@ def interview_kb():
         [InlineKeyboardButton(text="💡 Подсказка", callback_data="hint"),
          InlineKeyboardButton(text="🛑 Завершить", callback_data="stop_interview")]
     ])
+def mode_selection_kb():
+    """Выбор режима работы бота"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💼 Собеседование", callback_data="mode_interview")],
+        [InlineKeyboardButton(text="🎭 Социальный симулятор", callback_data="mode_social")]
+    ])

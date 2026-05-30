@@ -44,9 +44,14 @@ def interview_kb():
         [InlineKeyboardButton(text="💡 Подсказка", callback_data="hint"),
          InlineKeyboardButton(text="🛑 Завершить", callback_data="stop_interview")]
     ])
-def mode_selection_kb():
-    """Выбор режима работы бота"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Собеседование", callback_data="mode_interview")],
-        [InlineKeyboardButton(text="🎭 Социальный симулятор", callback_data="mode_social")]
-    ])
+
+def catalog_kb():
+    """Единый каталог: собеседование + социальные сценарии + свой"""
+    from handlers.social_sim import SCENARIOS
+    buttons = [
+        [InlineKeyboardButton(text="💼 Собеседование", callback_data="scenario_interview")]
+    ]
+    for key, sc in SCENARIOS.items():
+        buttons.append([InlineKeyboardButton(text=sc["name"], callback_data=f"scenario_{key}")])
+    buttons.append([InlineKeyboardButton(text="✨ Создать свой сценарий", callback_data="custom_scenario")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

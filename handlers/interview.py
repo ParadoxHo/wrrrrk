@@ -2,8 +2,7 @@ import logging
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from keyboards.inline import interview_kb
-from keyboards.reply import main_menu
+from keyboards.inline import interview_kb, catalog_kb
 from services.deepseek import ai_request
 from database.crud import get_or_create_user, save_interview, update_user_stats
 from database import async_session
@@ -44,8 +43,8 @@ async def start_interview(message: types.Message, state: FSMContext):
     history = [{"role": "system", "content": system}]
     try:
         first = await ai_request(history)
-    except Exception as e:
-        await message.answer("Ошибка запуска. Попробуйте позже.", reply_markup=main_menu())
+    except Exception:
+        await message.answer("Ошибка запуска. Попробуйте позже.", reply_markup=catalog_kb())
         await state.clear()
         return
 
@@ -109,7 +108,7 @@ async def finish_interview(message: types.Message, state: FSMContext, early=Fals
     except:
         report = "Не удалось сформировать отчёт."
     await message.answer(report)
-    await message.answer("🏁 Интервью завершено.", reply_markup=main_menu())
+    await message.answer("🏁 Интервью завершено.", reply_markup=catalog_kb())
 
     async with async_session() as session:
         user = await get_or_create_user(session, message.from_user.id, message.from_user.username)

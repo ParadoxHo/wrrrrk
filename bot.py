@@ -256,3 +256,12 @@ async def pull_plug(callback: CallbackQuery, state: FSMContext):
         ])
     )
     await callback.answer()
+
+# ================= ЗАПУСК БОТА =================
+async def main():
+    logging.info("Бот успешно запущен и слушает Telegram!")
+    # Запускаем прослушивание входящих сообщений
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())

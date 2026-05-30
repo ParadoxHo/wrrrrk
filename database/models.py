@@ -1,0 +1,46 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Text
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(Integer, unique=True, nullable=False)
+    username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    interviews = relationship("Interview", back_populates="user", lazy="dynamic")
+    stats = relationship("UserStats", back_populates="user", uselist=False)
+
+class Interview(Base):
+    __tablename__ = 'interviews'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    profession = Column(String)
+    level = Column(String)
+    persona = Column(String)
+    language = Column(String)
+    total_questions = Column(Integer)
+    resume_text = Column(Text, nullable=True)
+    vacancy_text = Column(Text, nullable=True)
+    history = Column(JSON)
+    report = Column(Text)
+    metrics = Column(JSON)
+    hints_used = Column(Integer, default=0)
+    early_stop = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="interviews")
+
+class UserStats(Base):
+    __tablename__ = 'user_stats'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
+    total_interviews = Column(Integer, default=0)
+    average_score = Column(Float, default=0.0)
+    strengths = Column(JSON)
+    weaknesses = Column(JSON)
+    recommendations = Column(Text)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="stats")

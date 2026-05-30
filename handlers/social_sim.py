@@ -10,11 +10,10 @@ router = Router()
 class SocialSimStates(StatesGroup):
     choosing_scenario = State()
     in_progress = State()
-    # для создания кастомного сценария
     waiting_for_custom_name = State()
     waiting_for_custom_desc = State()
-    adding_persona = State()          # вводим имя и характер одной строкой
-    confirm_personas = State()       # диалог: добавить ещё или начать
+    adding_persona = State()
+    confirm_personas = State()
 
 # ------------------- 10 БАЗОВЫХ СЦЕНАРИЕВ -------------------
 SCENARIOS = {
@@ -102,14 +101,6 @@ SCENARIOS = {
 }
 
 # ------------------- Клавиатуры -------------------
-def social_scenario_kb():
-    buttons = []
-    for key, sc in SCENARIOS.items():
-        buttons.append([InlineKeyboardButton(text=sc["name"], callback_data=f"scenario_{key}")])
-    buttons.append([InlineKeyboardButton(text="✨ Создать свой сценарий", callback_data="custom_scenario")])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_mode")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 def custom_persona_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить персонажа", callback_data="add_persona")],
@@ -117,20 +108,20 @@ def custom_persona_kb():
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_custom")]
     ])
 
-# ------------------- ВХОД В РЕЖИМ -------------------
-@router.callback_query(F.data == "mode_social")
-async def start_social(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text(
-        "Выберите сценарий социального симулятора:",
-        reply_markup=social_scenario_kb()
-    )
-    await state.set_state(SocialSimStates.choosing_scenario)
+# ------------------- Обработчик каталога: выбор сценария -------------------
+@router.callback_query(F.data == "scenario_interview")
+async def interview_chosen(call: types.CallbackQuery, state: FSMContext):
+    """Запуск цепочки настройки собеседования"""
+    from handlers.interview_setup import start_interview_setup
+    await start_interview_setup(call.message, state)
     await call.answer()
 
-# ------------------- ВЫБОР СЦЕНАРИЯ (в т.ч. кастом) -------------------
-@router.callback_query(SocialSimStates.choosing_scenario, F.data.startswith("scenario_"))
+@router.callback_query(F.data.startswith("scenario_"))
 async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     key = call.data.split("_", 1)[1]
+    if key == "interview":
+        return  # уже обработано выше
+
     sc = SCENARIOS.get(key)
     if not sc:
         await call.answer("Сценарий не найден", show_alert=True)
@@ -157,7 +148,7 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
-@router.callback_query(SocialSimStates.choosing_scenario, F.data == "custom_scenario")
+@router.callback_query(F.data == "custom_scenario")
 async def custom_scenario_start(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
         "Давайте создадим ваш уникальный сценарий.\n"
@@ -166,7 +157,7 @@ async def custom_scenario_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.waiting_for_custom_name)
     await call.answer()
 
-# ------------------- СОЗДАНИЕ КАСТОМНОГО СЦЕНАРИЯ -------------------
+# ------------------- Создание кастомного сценария -------------------
 @router.message(SocialSimStates.waiting_for_custom_name, F.text)
 async def custom_name(msg: types.Message, state: FSMContext):
     await state.update_data(custom_name=msg.text.strip())
@@ -237,19 +228,12 @@ async def start_custom(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(SocialSimStates.adding_persona, F.data == "cancel_custom")
 async def cancel_custom(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text("Создание сценария отменено.", reply_markup=social_scenario_kb())
-    await state.set_state(SocialSimStates.choosing_scenario)
-    await call.answer()
-
-# ------------------- НАЗАД В ГЛАВНОЕ МЕНЮ -------------------
-@router.callback_query(F.data == "back_to_mode")
-async def back_to_mode(call: types.CallbackQuery, state: FSMContext):
-    from keyboards.inline import mode_selection_kb
-    await call.message.edit_text("Выберите режим работы:", reply_markup=mode_selection_kb())
+    from keyboards.inline import catalog_kb
+    await call.message.edit_text("Создание сценария отменено.", reply_markup=catalog_kb())
     await state.clear()
     await call.answer()
 
-# ------------------- ИГРОВОЙ ПРОЦЕСС -------------------
+# ------------------- Игровой процесс -------------------
 @router.message(SocialSimStates.in_progress, F.text)
 async def handle_social_message(msg: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -278,9 +262,9 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
 
     await msg.answer("✏️ Продолжайте диалог или напишите /finish для завершения.")
 
-# ------------------- ЗАВЕРШЕНИЕ -------------------
+# ------------------- Завершение -------------------
 @router.message(Command("finish"), SocialSimStates.in_progress)
 async def finish_social(msg: types.Message, state: FSMContext):
-    from keyboards.inline import mode_selection_kb
-    await msg.answer("🏁 Симуляция завершена.", reply_markup=mode_selection_kb())
-    await state.clear()           
+    from keyboards.inline import catalog_kb
+    await msg.answer("🏁 Симуляция завершена.", reply_markup=catalog_kb())
+    await state.clear()

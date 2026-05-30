@@ -10,62 +10,114 @@ router = Router()
 class SocialSimStates(StatesGroup):
     choosing_scenario = State()
     in_progress = State()
+    # для создания кастомного сценария
+    waiting_for_custom_name = State()
+    waiting_for_custom_desc = State()
+    adding_persona = State()          # вводим имя и характер одной строкой
+    confirm_personas = State()       # диалог: добавить ещё или начать
 
-# ------------------- СЦЕНАРИИ -------------------
+# ------------------- 10 БАЗОВЫХ СЦЕНАРИЕВ -------------------
 SCENARIOS = {
     "salary": {
         "name": "💰 Переговоры о повышении",
         "description": "Вы просите прибавку у начальника в присутствии HR и финдиректора.",
         "personas": [
-            {
-                "name": "Начальник",
-                "role": "system",
-                "content": "Ты — начальник отдела. Скептически относишься к повышению зарплат без веских оснований. Задаёшь конкретные вопросы о результатах."
-            },
-            {
-                "name": "HR",
-                "role": "system",
-                "content": "Ты — HR-менеджер. Поддерживаешь сотрудника, но обязана соблюдать политику компании. Ищешь компромисс."
-            },
-            {
-                "name": "Финдиректор",
-                "role": "system",
-                "content": "Ты — финансовый директор. Жёстко контролируешь бюджет. Требуешь обоснований и предлагаешь альтернативы (доп. обязанности)."
-            }
+            {"name": "Начальник", "role": "system", "content": "Ты — начальник отдела. Скептически относишься к повышению зарплат без веских оснований. Задаёшь конкретные вопросы о результатах."},
+            {"name": "HR", "role": "system", "content": "Ты — HR-менеджер. Поддерживаешь сотрудника, но обязана соблюдать политику компании. Ищешь компромисс."},
+            {"name": "Финдиректор", "role": "system", "content": "Ты — финансовый директор. Жёстко контролируешь бюджет. Требуешь обоснований и предлагаешь альтернативы."}
         ]
     },
     "pitch": {
         "name": "🚀 Питч перед инвесторами",
-        "description": "Вы представляете стартап трём скептически настроенным инвесторам.",
+        "description": "Вы представляете стартап трём инвесторам.",
         "personas": [
-            {
-                "name": "Инвестор 1 (технарь)",
-                "role": "system",
-                "content": "Технический эксперт. Спрашивает про архитектуру, масштабируемость, конкурентов."
-            },
-            {
-                "name": "Инвестор 2 (финансист)",
-                "role": "system",
-                "content": "Финансовый аналитик. Интересуется юнит-экономикой, CAC, LTV, прогнозами."
-            },
-            {
-                "name": "Инвестор 3 (скептик)",
-                "role": "system",
-                "content": "Общий скептик. Сомневается в команде, рынке, реализуемости. Задаёт провокационные вопросы."
-            }
+            {"name": "Инвестор-технарь", "role": "system", "content": "Технический эксперт. Спрашивает про архитектуру, масштабируемость, конкурентов."},
+            {"name": "Инвестор-финансист", "role": "system", "content": "Финансовый аналитик. Интересуется юнит-экономикой, CAC, LTV, прогнозами."},
+            {"name": "Инвестор-скептик", "role": "system", "content": "Сомневается в команде, рынке, реализуемости. Задаёт провокационные вопросы."}
+        ]
+    },
+    "client_conflict": {
+        "name": "📞 Конфликт с VIP-клиентом",
+        "description": "Недовольный заказчик требует срочных изменений. Вы — менеджер проекта, также участвует технический специалист.",
+        "personas": [
+            {"name": "VIP-клиент", "role": "system", "content": "Требовательный клиент с большим бюджетом. Недоволен сроками и качеством. Эмоциональный, перебивает, но готов к конструктиву."},
+            {"name": "Техлид", "role": "system", "content": "Технический руководитель. Защищает команду, объясняет реалистичность требований. Спокойный, но уверенный."}
+        ]
+    },
+    "team_meeting": {
+        "name": "👥 Совещание команды",
+        "description": "Scrum-встреча: обсуждаете срыв сроков. Вы — тимлид, два разработчика с противоположными мнениями.",
+        "personas": [
+            {"name": "Разработчик-энтузиаст", "role": "system", "content": "Предлагает переписать модуль на новой технологии. Горячий сторонник инноваций, иногда не учитывает сроки."},
+            {"name": "Разработчик-консерватор", "role": "system", "content": "Против необдуманных изменений, ценит стабильность. Скептик, но надёжный."}
+        ]
+    },
+    "project_defense": {
+        "name": "🎓 Защита проекта",
+        "description": "Защита дипломной работы перед комиссией из трёх преподавателей.",
+        "personas": [
+            {"name": "Профессор-добряк", "role": "system", "content": "Хочет, чтобы студент раскрылся. Задаёт мягкие наводящие вопросы."},
+            {"name": "Доцент-придира", "role": "system", "content": "Ищет слабые места в методологии и расчётах. Ставит каверзные вопросы."},
+            {"name": "Ассистент-наблюдатель", "role": "system", "content": "В основном молчит, но иногда вставляет замечания по оформлению или литературе."}
+        ]
+    },
+    "family_discussion": {
+        "name": "🏠 Семейный разговор",
+        "description": "Подросток хочет бросить школу и заняться музыкой. Вы — один из родителей.",
+        "personas": [
+            {"name": "Подросток", "role": "system", "content": "16 лет, мечтает стать музыкантом, считает школу бесполезной. Эмоциональный, иногда дерзкий."},
+            {"name": "Мать", "role": "system", "content": "Переживает за будущее ребёнка. Хочет поддержать, но боится нестабильности творческой карьеры."}
+        ]
+    },
+    "neighbor_dispute": {
+        "name": "🏘️ Спор с соседом",
+        "description": "Сосед жалуется на шум после 23:00. Вы пытаетесь уладить конфликт мирно.",
+        "personas": [
+            {"name": "Сосед-пенсионер", "role": "system", "content": "Раздражённый пожилой человек, жалуется на громкую музыку. Требует тишины."},
+            {"name": "Участковый", "role": "system", "content": "Пришёл разобраться. Нейтрален, но склонен успокоить обе стороны."}
+        ]
+    },
+    "supplier_negotiation": {
+        "name": "📦 Переговоры с поставщиком",
+        "description": "Поставщик задерживает партию товара. Вы — менеджер по закупкам.",
+        "personas": [
+            {"name": "Поставщик", "role": "system", "content": "Оправдывается логистическими проблемами, предлагает скидку на следующий заказ."},
+            {"name": "Финансовый контролёр", "role": "system", "content": "Внутренний сотрудник, который напоминает о штрафных санкциях и бюджете."}
+        ]
+    },
+    "date": {
+        "name": "💕 Первое свидание",
+        "description": "Романтическая встреча в кафе. Вы и ваш собеседник.",
+        "personas": [
+            {"name": "Девушка/парень", "role": "system", "content": "Обаятельный, но с чувством юмора. Задаёт вопросы о хобби, работе, мечтах. Лёгкий флирт."}
+        ]
+    },
+    "reprimand": {
+        "name": "⚠️ Воспитательная беседа",
+        "description": "Начальник вызывает подчинённого из-за серьёзной ошибки в отчёте.",
+        "personas": [
+            {"name": "Начальник", "role": "system", "content": "Строгий, но справедливый. Требует объяснений и плана исправления."}
         ]
     }
 }
 
-# ------------------- Клавиатура сценариев -------------------
+# ------------------- Клавиатуры -------------------
 def social_scenario_kb():
     buttons = []
     for key, sc in SCENARIOS.items():
         buttons.append([InlineKeyboardButton(text=sc["name"], callback_data=f"scenario_{key}")])
+    buttons.append([InlineKeyboardButton(text="✨ Создать свой сценарий", callback_data="custom_scenario")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_mode")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ------------------- Вход в режим -------------------
+def custom_persona_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить персонажа", callback_data="add_persona")],
+        [InlineKeyboardButton(text="▶️ Начать симуляцию", callback_data="start_custom")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_custom")]
+    ])
+
+# ------------------- ВХОД В РЕЖИМ -------------------
 @router.callback_query(F.data == "mode_social")
 async def start_social(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
@@ -75,10 +127,10 @@ async def start_social(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.choosing_scenario)
     await call.answer()
 
-# ------------------- Выбор сценария -------------------
+# ------------------- ВЫБОР СЦЕНАРИЯ (в т.ч. кастом) -------------------
 @router.callback_query(SocialSimStates.choosing_scenario, F.data.startswith("scenario_"))
 async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
-    key = call.data.split("_", 1)[1]  # всё после первого "_"
+    key = call.data.split("_", 1)[1]
     sc = SCENARIOS.get(key)
     if not sc:
         await call.answer("Сценарий не найден", show_alert=True)
@@ -105,7 +157,91 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
-# ------------------- Назад в главное меню -------------------
+@router.callback_query(SocialSimStates.choosing_scenario, F.data == "custom_scenario")
+async def custom_scenario_start(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text(
+        "Давайте создадим ваш уникальный сценарий.\n"
+        "Сначала введите **название** (одним сообщением):"
+    )
+    await state.set_state(SocialSimStates.waiting_for_custom_name)
+    await call.answer()
+
+# ------------------- СОЗДАНИЕ КАСТОМНОГО СЦЕНАРИЯ -------------------
+@router.message(SocialSimStates.waiting_for_custom_name, F.text)
+async def custom_name(msg: types.Message, state: FSMContext):
+    await state.update_data(custom_name=msg.text.strip())
+    await msg.answer("Теперь напишите краткое описание ситуации:")
+    await state.set_state(SocialSimStates.waiting_for_custom_desc)
+
+@router.message(SocialSimStates.waiting_for_custom_desc, F.text)
+async def custom_desc(msg: types.Message, state: FSMContext):
+    await state.update_data(custom_desc=msg.text.strip(), custom_personas=[])
+    await msg.answer(
+        "Отлично! Теперь будем добавлять персонажей.\n"
+        "На каждого персонажа отправьте **одно сообщение** в формате:\n"
+        "`Имя: характер`\n\n"
+        "Например: `Босс: строгий, требует отчёт`\n\n"
+        "Когда закончите, нажмите кнопку ниже.",
+        reply_markup=custom_persona_kb()
+    )
+    await state.set_state(SocialSimStates.adding_persona)
+
+@router.callback_query(SocialSimStates.adding_persona, F.data == "add_persona")
+async def prompt_persona(call: types.CallbackQuery):
+    await call.message.answer("Жду описание персонажа в формате `Имя: характер`")
+    await call.answer()
+
+@router.message(SocialSimStates.adding_persona, F.text)
+async def add_persona(msg: types.Message, state: FSMContext):
+    data = await state.get_data()
+    personas = data.get("custom_personas", [])
+    parts = msg.text.split(":", 1)
+    if len(parts) != 2:
+        await msg.answer("Неверный формат. Используйте: `Имя: описание характера`")
+        return
+    name = parts[0].strip()
+    description = parts[1].strip()
+    personas.append({"name": name, "role": "system", "content": description})
+    await state.update_data(custom_personas=personas)
+    await msg.answer(f"✅ Персонаж «{name}» добавлен. Всего персонажей: {len(personas)}",
+                     reply_markup=custom_persona_kb())
+
+@router.callback_query(SocialSimStates.adding_persona, F.data == "start_custom")
+async def start_custom(call: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    personas = data.get("custom_personas", [])
+    if not personas:
+        await call.answer("Добавьте хотя бы одного персонажа!", show_alert=True)
+        return
+    name = data.get("custom_name", "Мой сценарий")
+    desc = data.get("custom_desc", "")
+    system_messages = [
+        {"role": "system", "content": f"Сценарий: {name}. {desc}. Сейчас начнётся групповая беседа."}
+    ]
+    for p in personas:
+        system_messages.append({"role": "system", "content": f"[Роль: {p['name']}] {p['content']}"})
+
+    await state.update_data(
+        scenario="custom",
+        personas=personas,
+        history=system_messages
+    )
+    persona_list = "\n".join([f"• {p['name']}" for p in personas])
+    await call.message.edit_text(
+        f"🎬 Ваш сценарий: {name}\n\n{desc}\n\n"
+        f"Участники:\n{persona_list}\n\n"
+        "Начинайте беседу. Ваше первое сообщение?"
+    )
+    await state.set_state(SocialSimStates.in_progress)
+    await call.answer()
+
+@router.callback_query(SocialSimStates.adding_persona, F.data == "cancel_custom")
+async def cancel_custom(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text("Создание сценария отменено.", reply_markup=social_scenario_kb())
+    await state.set_state(SocialSimStates.choosing_scenario)
+    await call.answer()
+
+# ------------------- НАЗАД В ГЛАВНОЕ МЕНЮ -------------------
 @router.callback_query(F.data == "back_to_mode")
 async def back_to_mode(call: types.CallbackQuery, state: FSMContext):
     from keyboards.inline import mode_selection_kb
@@ -113,7 +249,7 @@ async def back_to_mode(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# ------------------- Обработка сообщений пользователя -------------------
+# ------------------- ИГРОВОЙ ПРОЦЕСС -------------------
 @router.message(SocialSimStates.in_progress, F.text)
 async def handle_social_message(msg: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -142,9 +278,9 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
 
     await msg.answer("✏️ Продолжайте диалог или напишите /finish для завершения.")
 
-# ------------------- Завершение симуляции -------------------
+# ------------------- ЗАВЕРШЕНИЕ -------------------
 @router.message(Command("finish"), SocialSimStates.in_progress)
 async def finish_social(msg: types.Message, state: FSMContext):
     from keyboards.inline import mode_selection_kb
     await msg.answer("🏁 Симуляция завершена.", reply_markup=mode_selection_kb())
-    await state.clear()
+    await state.clear()           

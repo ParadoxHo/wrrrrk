@@ -74,7 +74,6 @@ async def cmd_start(message: Message, state: FSMContext):
         reply_markup=get_start_keyboard()
     )
 
-@aiogram_callback := dp.callback_query # Для удобства навигации по колбэкам
 @dp.callback_query(F.data == "help_info")
 async def toggle_help(callback: CallbackQuery):
     await callback.message.edit_text(

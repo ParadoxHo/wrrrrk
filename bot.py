@@ -7,6 +7,7 @@ from handlers.start import router as start_router
 from handlers.interview_setup import router as setup_router
 from handlers.interview import router as interview_router
 from handlers.stats import router as stats_router
+from handlers.social_sim import router as social_router
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -18,6 +19,7 @@ async def main():
     dp.include_router(setup_router)
     dp.include_router(interview_router)
     dp.include_router(stats_router)
+    dp.include_router(social_router)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

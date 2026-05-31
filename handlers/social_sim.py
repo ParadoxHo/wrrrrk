@@ -21,7 +21,8 @@ class SocialSimStates(StatesGroup):
     waiting_for_persona_desc = State()
     adding_persona = State()
     waiting_for_date_gender = State()
-    waiting_for_date_age = State()   # новый стейт для выбора возраста
+    waiting_for_date_age = State()
+    waiting_for_date_type = State()   # новый стейт для выбора типажа
 
 SCENARIOS = {
     "salary": {
@@ -34,13 +35,13 @@ SCENARIOS = {
     },
     "date": {
         "name": "💕 Первое свидание",
-        "description": "Романтическая встреча в кафе. Вы и ваш собеседник (пол и возраст можно выбрать).",
-        "personas": []  # заполняется после выбора пола и возраста
+        "description": "Романтическая встреча в кафе. Вы и ваш собеседник (пол, возраст и типаж можно выбрать).",
+        "personas": []
     },
     "internet_meeting": {
         "name": "💬 Знакомство в интернете",
-        "description": "Вы знакомитесь в чате/приложении. Один собеседник (пол и возраст выбираются).",
-        "personas": []  # заполняется после выбора пола и возраста
+        "description": "Вы знакомитесь в чате/приложении. Один собеседник (пол, возраст и типаж выбираются).",
+        "personas": []
     },
     "team_meeting": {
         "name": "👥 Совещание команды",
@@ -75,6 +76,14 @@ def age_kb():
         [InlineKeyboardButton(text="🧑 30+", callback_data="age_30_plus")]
     ])
 
+def type_kb():
+    """Выбор типажа собеседника"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="😏 Игривая/кокетливая", callback_data="type_flirty")],
+        [InlineKeyboardButton(text="🌸 Скромная/загадочная", callback_data="type_shy")],
+        [InlineKeyboardButton(text="🧐 Прямолинейная/саркастичная", callback_data="type_sarcastic")]
+    ])
+
 # ---------- Вспомогательные функции ----------
 async def update_persona_state(current_state, user_message):
     prompt = [
@@ -104,7 +113,7 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     if key == "interview":
         return
 
-    # Сценарии, требующие выбора пола и возраста
+    # Сценарии, требующие выбора пола, возраста и типажа
     if key in ("date", "internet_meeting"):
         sc = SCENARIOS[key]
         await call.message.edit_text(
@@ -146,7 +155,7 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
-# ---------- Выбор пола → выбор возраста ----------
+# ---------- Выбор пола → возраст → типаж ----------
 @router.callback_query(SocialSimStates.waiting_for_date_gender, F.data.startswith("gender_"))
 async def gender_chosen(call: types.CallbackQuery, state: FSMContext):
     gender = call.data
@@ -157,6 +166,14 @@ async def gender_chosen(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(SocialSimStates.waiting_for_date_age, F.data.startswith("age_"))
 async def age_chosen(call: types.CallbackQuery, state: FSMContext):
+    age_code = call.data
+    await state.update_data(selected_age=age_code)
+    await call.message.edit_text("🎭 Выберите типаж собеседника:", reply_markup=type_kb())
+    await state.set_state(SocialSimStates.waiting_for_date_type)
+    await call.answer()
+
+@router.callback_query(SocialSimStates.waiting_for_date_type, F.data.startswith("type_"))
+async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     key = data.get("scenario")
     sc = SCENARIOS.get(key)
@@ -165,24 +182,45 @@ async def age_chosen(call: types.CallbackQuery, state: FSMContext):
         return
 
     gender = data.get("selected_gender")
-    age_code = call.data  # age_18_22, age_23_30, age_30_plus
+    age_code = data.get("selected_age")
+    persona_type = call.data  # type_flirty, type_shy, type_sarcastic
 
-    # Определяем пол и возрастную категорию
+    # Определяем имя и базу
     if gender == "gender_girl":
         persona_name = "Девушка"
-        base_traits = "Обаятельная, с чувством юмора. Любит лёгкий флирт."
     else:
         persona_name = "Парень"
-        base_traits = "Обаятельный, с чувством юмора. Любит лёгкий флирт."
 
+    # Возрастные черты
     if age_code == "age_18_22":
-        age_traits = "Тебе 20 лет. Ты студент(ка), немного наивен(на), активно используешь сленг, эмодзи, говоришь быстро и эмоционально. Иногда перебиваешь."
+        age_traits = "Тебе 20 лет. Ты студент(ка), активно используешь сленг, эмодзи, можешь быть эмоциональным и немного наивным."
     elif age_code == "age_23_30":
-        age_traits = "Тебе 26 лет. Ты работаешь, уверен(а) в себе, шутишь более тонко. Речь грамотная, но без официоза."
+        age_traits = "Тебе 26 лет. Ты уже работаешь, уверен(а) в себе, шутишь более тонко, но иногда позволяешь себе легкомысленность."
     else:
-        age_traits = "Тебе 35 лет. Ты опытный, циничный, но интересный собеседник. Шутки с долей сарказма, говоришь размеренно, не растрачиваешь эмоции попусту."
+        age_traits = "Тебе 35 лет. Ты опытный, циничный, но интересный собеседник. Ценишь время, говоришь по делу, не растрачиваешь эмоции попусту."
 
-    persona_content = f"{base_traits} {age_traits} Важно: будь максимально естественным, как живой человек в реальной беседе. Не строй идеальных фраз."
+    # Особенности типажа (основано на реальных паттернах поведения)
+    if persona_type == "type_flirty":
+        type_traits = (
+            "Ты игривая и кокетливая. Любишь подшучивать, использовать смайлики 😉, говорить комплименты, но с лёгкой недосказанностью. "
+            "Можешь проверять, насколько парень уверен в себе, иногда специально уходишь от ответа, чтобы посмотреть на его реакцию. "
+            "Речь живая, с намёками, но не вульгарная."
+        )
+    elif persona_type == "type_shy":
+        type_traits = (
+            "Ты скромная и немного загадочная. Отвечаешь коротко, но с тёплой интонацией. "
+            "Иногда делаешь паузы (многоточия), прежде чем ответить. Не любишь слишком прямых вопросов, можешь перевести тему. "
+            "Показываешь интерес не сразу, а постепенно. В речи часто используешь слова 'наверное', 'может быть'."
+        )
+    else:  # type_sarcastic
+        type_traits = (
+            "Ты прямолинейная и любишь сарказм. Шутишь остро, иногда на грани, но не переходишь в грубость. "
+            "Можешь ставить неудобные вопросы и ждать, как собеседник выкрутится. "
+            "Не терпишь фальши, ценишь интеллект. Если парень говорит глупость, можешь едко прокомментировать. "
+            "В речи используешь кавычки для иронии, восклицания."
+        )
+
+    persona_content = f"{age_traits} {type_traits} Важно: будь максимально естественной, как живой человек в реальной беседе. Не строй идеальных фраз."
 
     persona = {"name": persona_name, "role": "system", "content": persona_content}
 
@@ -268,7 +306,6 @@ async def persona_desc(msg: types.Message, state: FSMContext):
         return
 
     personas = data.get("custom_personas", [])
-    # Добавляем к описанию требование естественности
     full_desc = f"{description} Важно: веди себя максимально естественно, как живой человек. Используй разговорный язык, не бойся эмоций. Ты не идеальный собеседник."
     personas.append({"name": name, "role": "system", "content": full_desc})
     total = data.get("custom_total_personas", 0)
@@ -340,7 +377,6 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         p_name = p["name"]
         current_state = persona_states.get(p_name, {"interest": 50, "mood": "нейтральное"})
         state_desc = f"Текущее состояние: интерес {current_state['interest']}/100, настроение: {current_state['mood']}."
-        # Инструкция для естественной речи
         instruction = (f"Сейчас твоя очередь говорить. Ты — {p_name}. {state_desc} "
                        "Отвечай на последнее сообщение пользователя, учитывая предыдущий диалог и своё настроение. "
                        "Будь краток, но выразителен. Используй живую разговорную речь, не стесняйся эмоций, "

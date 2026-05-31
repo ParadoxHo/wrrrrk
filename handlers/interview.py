@@ -1,8 +1,10 @@
 import logging
 from aiogram import Router, F, types
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from keyboards.inline import interview_kb, catalog_kb
+from keyboards.reply import commands_keyboard
 from services.deepseek import ai_request
 from database.crud import get_or_create_user, save_interview, update_user_stats
 from database import async_session
@@ -74,6 +76,10 @@ async def early_stop(call: types.CallbackQuery, state: FSMContext):
     await finish_interview(call.message, state, early=True)
     await call.answer()
 
+@router.message(InterviewStates.interview_in_progress, Command("finish"))
+async def finish_interview_command(msg: types.Message, state: FSMContext):
+    await finish_interview(msg, state, early=True)
+
 @router.message(InterviewStates.interview_in_progress, F.text & ~F.text.startswith("/"))
 async def handle_answer(msg: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -109,6 +115,8 @@ async def finish_interview(message: types.Message, state: FSMContext, early=Fals
         report = "Не удалось сформировать отчёт."
     await message.answer(report)
     await message.answer("🏁 Интервью завершено.", reply_markup=catalog_kb())
+    # показываем постоянные кнопки
+    await message.answer("⌨️ Используйте кнопки для управления:", reply_markup=commands_keyboard())
 
     async with async_session() as session:
         user = await get_or_create_user(session, message.from_user.id, message.from_user.username)

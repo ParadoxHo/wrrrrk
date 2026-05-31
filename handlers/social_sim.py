@@ -215,7 +215,6 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
             "В речи используешь кавычки для иронии, восклицания."
         )
 
-    # ВАЖНО: добавляем запрет на рубли в финальный промпт
     persona_content = (
         f"{age_traits} {type_traits} "
         "Важно: будь максимально естественной, как живой человек в реальной беседе. Не строй идеальных фраз. "
@@ -427,6 +426,9 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
     history = data.get("history", [])
     scenario_name = data.get("scenario", "сценарий")
 
+    # Сразу очищаем состояние, чтобы последующие нажатия не приводили к путанице
+    await state.clear()
+
     await msg.answer("Оцените сценарий:", reply_markup=rating_kb())
 
     analysis_prompt = history + [
@@ -442,6 +444,8 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("rate_"))
 async def rate_scenario(call: types.CallbackQuery, state: FSMContext):
+    # Состояние уже должно быть очищено, но на всякий случай сбрасываем
+    await state.clear()
     rating = call.data.split("_")[1]
     if rating == "like":
         await call.answer("👍 Спасибо за оценку!")

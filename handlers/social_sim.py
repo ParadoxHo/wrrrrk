@@ -22,7 +22,7 @@ class SocialSimStates(StatesGroup):
     adding_persona = State()
     waiting_for_date_gender = State()
     waiting_for_date_age = State()
-    waiting_for_date_type = State()   # новый стейт для выбора типажа
+    waiting_for_date_type = State()   # выбор типажа
 
 SCENARIOS = {
     "salary": {
@@ -47,9 +47,9 @@ SCENARIOS = {
         "name": "👥 Совещание команды",
         "description": "Scrum-встреча: обсуждаете срыв сроков. Вы — тимлид, два разработчика с противоположными мнениями.",
         "personas": [
-            {"name": "Андрей (энтузиаст)", "role": "system",
+            {"name": "Алекс (энтузиаст)", "role": "system",
              "content": "Тебе 28, ты горишь новыми технологиями, немного наивен, пересыпаешь речь англицизмами. Быстро загораешься, но можешь упустить детали."},
-            {"name": "Ольга (консерватор)", "role": "system",
+            {"name": "Мария (консерватор)", "role": "system",
              "content": "Тебе 34, ты опытный разработчик, ценишь стабильность. Скептик, иногда ворчишь. Говоришь по делу, с долей сарказма. Не любишь, когда тебя перебивают."}
         ]
     }

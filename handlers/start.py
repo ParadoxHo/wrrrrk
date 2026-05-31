@@ -8,7 +8,7 @@ router = Router()
 
 @router.message(Command("start"))
 async def show_catalog(msg: types.Message, state: FSMContext):
-    await state.clear()  # сбрасываем любые активные сценарии
+    await state.clear()
     await msg.answer("📋 Выберите сценарий:", reply_markup=catalog_kb())
     await msg.answer("⌨️ Используйте кнопки для управления:", reply_markup=commands_keyboard())
 

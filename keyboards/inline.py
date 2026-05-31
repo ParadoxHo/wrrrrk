@@ -45,8 +45,21 @@ def interview_kb():
          InlineKeyboardButton(text="🛑 Завершить", callback_data="stop_interview")]
     ])
 
+def hint_kb():
+    """Кнопка подсказки для социальных сценариев"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💡 Подсказка", callback_data="social_hint")]
+    ])
+
+def rating_kb():
+    """Кнопки оценки сценария"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👍 Понравилось", callback_data="rate_like"),
+         InlineKeyboardButton(text="👎 Не понравилось", callback_data="rate_dislike")]
+    ])
+
 def catalog_kb():
-    """Единый каталог: собеседование + социальные сценарии + свой"""
+    """Единый каталог с фиксированным набором сценариев"""
     from handlers.social_sim import SCENARIOS
     buttons = [
         [InlineKeyboardButton(text="💼 Собеседование", callback_data="scenario_interview")]

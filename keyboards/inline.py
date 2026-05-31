@@ -33,11 +33,7 @@ def resume_skip_kb():
         [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_resume")]
     ])
 
-def vacancy_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 Вставить ссылку на вакансию", callback_data="add_vacancy")],
-        [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_vacancy")]
-    ])
+# vacancy_kb() удалена
 
 def interview_kb():
     return InlineKeyboardMarkup(inline_keyboard=[

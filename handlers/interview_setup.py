@@ -24,7 +24,6 @@ async def safe_edit(msg: types.Message, text: str, reply_markup=None):
         pass
 
 async def start_interview_setup(message: types.Message, state: FSMContext):
-    """Запуск цепочки настройки собеседования (вызывается из social_sim)"""
     await state.clear()
     await message.edit_text("🌍 Выберите язык:", reply_markup=language_kb())
     await state.set_state(SetupStates.waiting_for_language)

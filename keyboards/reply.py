@@ -1,12 +1,10 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def commands_keyboard():
-    """Постоянная клавиатура с командами управления"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="/start")],
-            [KeyboardButton(text="/finish"), KeyboardButton(text="/stats")],
-            [KeyboardButton(text="/help")]
+            [KeyboardButton(text="🏠 Главная"), KeyboardButton(text="❌ Завершить")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="ℹ️ Помощь")]
         ],
         resize_keyboard=True
     )

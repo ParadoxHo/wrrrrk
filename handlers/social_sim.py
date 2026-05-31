@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
-from keyboards.inline import hint_kb, rating_kb, catalog_kb
+from keyboards.inline import rating_kb, catalog_kb
 from keyboards.reply import commands_keyboard
 from services.deepseek import ai_request
 
@@ -133,8 +133,7 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
         f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
         f"Участники:\n{persona_list}\n\n"
         "Начинайте беседу. Ваше первое сообщение?\n"
-        "ℹ️ Для завершения используйте /finish.\n"
-        "💡 В любой момент можно получить подсказку."
+        "ℹ️ Для завершения используйте /finish."
     )
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
@@ -249,15 +248,11 @@ async def persona_desc(msg: types.Message, state: FSMContext):
         await msg.answer(f"✅ Персонаж «{name}» добавлен ({current}/{total}).\nТеперь введите имя для собеседника №{current+1}:")
         await state.set_state(SocialSimStates.waiting_for_persona_name)
     else:
-        # Все собраны
         await state.update_data(custom_personas=personas, temp_persona_name=None)
-        # Показываем кнопки подтверждения
         await msg.answer(f"✅ Все {total} персонажей добавлены.\nНажмите «▶️ Начать симуляцию» или «❌ Отмена».",
                          reply_markup=custom_persona_kb())
         await state.set_state(SocialSimStates.adding_persona)
 
-# Обработчики кнопок подтверждения (start_custom, cancel_custom) остаются,
-# но теперь они используют данные из custom_personas и custom_user_role
 @router.callback_query(SocialSimStates.adding_persona, F.data == "start_custom")
 async def start_custom(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -298,7 +293,7 @@ async def cancel_custom(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# ---------- Игровой процесс с учётом состояния ----------
+# ---------- Игровой процесс (без автоматических подсказок) ----------
 @router.message(SocialSimStates.in_progress, F.text)
 async def handle_social_message(msg: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -333,22 +328,6 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
 
     for resp in responses:
         await msg.answer(resp, parse_mode="Markdown")
-
-    await msg.answer("💡 Нужна подсказка?", reply_markup=hint_kb())
-
-@router.callback_query(SocialSimStates.in_progress, F.data == "social_hint")
-async def social_hint(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    history = data["history"]
-    hint_prompt = history + [
-        {"role": "system", "content": "Ты — эксперт по коммуникации. Проанализируй последнюю ситуацию в диалоге и дай краткий совет пользователю (1-2 предложения), как лучше ответить или повести себя дальше. Не продолжай диалог, только совет."}
-    ]
-    try:
-        hint_text = await ai_request(hint_prompt)
-    except Exception:
-        hint_text = "Не удалось получить подсказку."
-    await call.message.answer(f"💡 **Подсказка:** {hint_text}", parse_mode="Markdown")
-    await call.answer()
 
 # ---------- Глобальный /finish ----------
 @router.message(Command("finish"))

@@ -7,8 +7,7 @@ from database import async_session
 from database.crud import (
     add_to_chat_queue, remove_from_chat_queue, get_random_user_from_queue,
     create_active_chat, get_active_chat_by_user, end_active_chat, get_or_create_user,
-    cleanup_expired_queue, set_allow_random_chat, get_user_by_telegram_id,
-    find_available_user
+    cleanup_expired_queue, set_allow_random_chat, find_available_user
 )
 from keyboards.inline import catalog_kb, cancel_search_kb
 from keyboards.reply import commands_keyboard
@@ -20,7 +19,6 @@ router = Router()
 class ChatRequestStates(StatesGroup):
     waiting_for_accept = State()
 
-# ---------- вспомогательные функции ----------
 async def _create_chat_and_notify(call, partner_telegram_id):
     async with async_session() as session:
         chat = await create_active_chat(session, call.from_user.id, partner_telegram_id)
@@ -208,12 +206,13 @@ async def handle_chat_message(msg: types.Message):
 @router.callback_query(F.data == "toggle_random_chat")
 async def toggle_random_chat(call: types.CallbackQuery):
     async with async_session() as session:
-        user = await get_user_by_telegram_id(session, call.from_user.id)
-        if not user:
-            await call.answer("Пользователь не найден.")
-            return
+        user = await get_or_create_user(session, call.from_user.id, call.from_user.username)
         new_value = not user.allow_random_chat
         await set_allow_random_chat(session, user.id, new_value)
-        status = "включена" if new_value else "выключена"
-        await call.message.edit_text(f"Настройка случайного чата: {status}.", reply_markup=catalog_kb())
+        status_text = "включён ✅" if new_value else "выключен ❌"
+        await call.message.edit_text(
+            f"🔔 Приём запросов на случайный чат: {status_text}.\n"
+            "Теперь другие пользователи могут найти вас и предложить чат.",
+            reply_markup=catalog_kb()
+        )
         await call.answer()

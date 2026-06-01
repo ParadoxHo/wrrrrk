@@ -20,45 +20,7 @@ router = Router()
 class ChatRequestStates(StatesGroup):
     waiting_for_accept = State()
 
-@router.callback_query(F.data == "random_chat")
-async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    user_id = call.from_user.id
-
-    async with async_session() as session:
-        if await get_active_chat_by_user(session, user_id):
-            await call.answer("Вы уже в чате! Завершите его командой /stop.", show_alert=True)
-            return
-
-        from sqlalchemy import select
-        from database.models import ChatQueue
-        q = await session.execute(select(ChatQueue).where(ChatQueue.user_id == user_id))
-        if q.scalar_one_or_none():
-            await call.answer("Вы уже в очереди. Ожидайте собеседника.", show_alert=True)
-            return
-
-        # Очищаем просроченные записи из очереди (на всякий случай)
-        await cleanup_expired_queue(session, bot=call.bot)
-
-        # 1. Пробуем найти активного искателя из очереди
-        partner = await get_random_user_from_queue(session, exclude_user_id=user_id)
-        if partner:
-            await remove_from_chat_queue(session, user_id)
-            await remove_from_chat_queue(session, partner.user_id)
-            await _create_chat_and_notify(call, partner.user_id)
-            return
-
-        # 2. Ищем доступного пассивного пользователя (allow_random_chat=1)
-        available_user = await find_available_user(session, exclude_user_id=user_id)
-        if available_user:
-            # Отправляем запрос пассивному пользователю
-            await _send_chat_request(call, available_user.telegram_id, state)
-            return
-
-        # 3. Никого нет – встаём в очередь
-        await add_to_chat_queue(session, user_id)
-        await call.message.edit_text("🔍 Ищем собеседника... Ожидайте.", reply_markup=cancel_search_kb())
-
+# ---------- вспомогательные функции ----------
 async def _create_chat_and_notify(call, partner_telegram_id):
     async with async_session() as session:
         chat = await create_active_chat(session, call.from_user.id, partner_telegram_id)
@@ -77,15 +39,25 @@ async def _create_chat_and_notify(call, partner_telegram_id):
         await call.message.edit_text("🎲 Собеседник найден! Можете начинать общение.")
         await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
+async def _end_chat_and_notify(bot, user_id: int):
+    """Завершает активный чат пользователя и уведомляет партнёра."""
+    async with async_session() as session:
+        chat = await get_active_chat_by_user(session, user_id)
+        if not chat:
+            return
+        partner_id = chat.user2_id if user_id == chat.user1_id else chat.user1_id
+        await end_active_chat(session, chat.id)
+        partner_user = await get_or_create_user(session, partner_id)
+        try:
+            await bot.send_message(partner_user.telegram_id, "🔚 Собеседник завершил чат.")
+        except:
+            pass
+
 async def _send_chat_request(call, partner_telegram_id, state: FSMContext):
-    # Сохраняем ID искателя в состоянии, чтобы при ответе знать, кому создавать чат
     await state.set_state(ChatRequestStates.waiting_for_accept)
     await state.update_data(requester_id=call.from_user.id)
-
-    # Сообщение искателю
     await call.message.edit_text("📩 Запрос отправлен пользователю. Ожидайте ответа...")
 
-    # Сообщение пассивному пользователю с кнопками
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     accept_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принять", callback_data="accept_chat"),
@@ -101,7 +73,52 @@ async def _send_chat_request(call, partner_telegram_id, state: FSMContext):
         await call.message.edit_text("Не удалось отправить запрос. Попробуйте позже.", reply_markup=catalog_kb())
         await state.clear()
 
-# Обработчики ответов на запрос
+# ---------- основной поиск ----------
+@router.callback_query(F.data == "random_chat")
+async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    user_id = call.from_user.id
+
+    async with async_session() as session:
+        if await get_active_chat_by_user(session, user_id):
+            await call.answer("Вы уже в чате! Завершите его командой /stop.", show_alert=True)
+            return
+
+        from sqlalchemy import select
+        from database.models import ChatQueue
+        q = await session.execute(select(ChatQueue).where(ChatQueue.user_id == user_id))
+        if q.scalar_one_or_none():
+            await call.answer("Вы уже в очереди. Ожидайте собеседника.", show_alert=True)
+            return
+
+        await cleanup_expired_queue(session, bot=call.bot)
+
+        # 1. Ищем активного искателя в очереди
+        partner = await get_random_user_from_queue(session, exclude_user_id=user_id)
+        if partner:
+            await remove_from_chat_queue(session, user_id)
+            await remove_from_chat_queue(session, partner.user_id)
+            await _create_chat_and_notify(call, partner.user_id)
+            return
+
+        # 2. Ищем пассивного пользователя с allow_random_chat=1
+        available_user = await find_available_user(session, exclude_user_id=user_id)
+        if available_user:
+            await _send_chat_request(call, available_user.telegram_id, state)
+            return
+
+        # 3. Никого нет – встаём в очередь
+        await add_to_chat_queue(session, user_id)
+        await call.message.edit_text("🔍 Ищем собеседника... Ожидайте.", reply_markup=cancel_search_kb())
+
+@router.callback_query(F.data == "cancel_search")
+async def cancel_search(call: types.CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        await remove_from_chat_queue(session, call.from_user.id)
+    await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
+    await call.answer()
+
+# ---------- обработка запроса ----------
 @router.callback_query(ChatRequestStates.waiting_for_accept, F.data == "accept_chat")
 async def accept_chat_request(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -110,15 +127,12 @@ async def accept_chat_request(call: types.CallbackQuery, state: FSMContext):
         await call.answer("Данные устарели.")
         return
 
-    # Создаём чат
     async with async_session() as session:
-        # Убедимся, что оба не в чате уже
         if await get_active_chat_by_user(session, call.from_user.id) or await get_active_chat_by_user(session, requester_id):
             await call.answer("Кто-то уже в чате.")
             await state.clear()
             return
         chat = await create_active_chat(session, requester_id, call.from_user.id)
-        # Уведомляем искателя
         try:
             await call.bot.send_message(requester_id, "🎲 Собеседник принял запрос! Начинайте общение.")
         except:
@@ -141,7 +155,7 @@ async def decline_chat_request(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# Обработчики кнопок быстрого доступа
+# ---------- быстрые кнопки и завершение ----------
 @router.message(F.text == "🏠 Главная")
 async def main_menu_from_chat(msg: types.Message, state: FSMContext):
     await _end_chat_and_notify(msg.bot, msg.from_user.id)
@@ -190,7 +204,7 @@ async def handle_chat_message(msg: types.Message):
             await msg.answer("Чат завершён.", reply_markup=catalog_kb())
             await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
-# Настройка allow_random_chat
+# ---------- настройка allow_random_chat ----------
 @router.callback_query(F.data == "toggle_random_chat")
 async def toggle_random_chat(call: types.CallbackQuery):
     async with async_session() as session:

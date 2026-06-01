@@ -2,7 +2,6 @@ import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
 from database import async_session
 from database.crud import (
     add_to_chat_queue, remove_from_chat_queue, get_random_user_from_queue,
@@ -16,10 +15,8 @@ from handlers.stats import stats as stats_handler
 
 router = Router()
 
-class ChatRequestStates(StatesGroup):
-    waiting_for_accept = State()
+# Убираем класс состояний, он больше не нужен
 
-# ---------- Вспомогательные функции ----------
 async def _create_chat_and_notify(call, partner_telegram_id):
     async with async_session() as session:
         chat = await create_active_chat(session, call.from_user.id, partner_telegram_id)
@@ -52,15 +49,12 @@ async def _end_chat_and_notify(bot, user_id: int):
         except:
             pass
 
-async def _send_chat_request(call, partner_telegram_id, state: FSMContext):
-    await state.set_state(ChatRequestStates.waiting_for_accept)
-    await state.update_data(requester_id=call.from_user.id)
-    await call.message.edit_text("📩 Запрос отправлен пользователю. Ожидайте ответа...")
-
+async def _send_chat_request(call, partner_telegram_id):
+    # Отправляем запрос пассивному пользователю с кнопками, где callback_data содержит ID искателя
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     accept_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принять", callback_data="accept_chat"),
-         InlineKeyboardButton(text="❌ Отклонить", callback_data="decline_chat")]
+        [InlineKeyboardButton(text="✅ Принять", callback_data=f"accept_chat:{call.from_user.id}"),
+         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"decline_chat:{call.from_user.id}")]
     ])
     try:
         await call.bot.send_message(
@@ -68,9 +62,9 @@ async def _send_chat_request(call, partner_telegram_id, state: FSMContext):
             "📩 Кто-то хочет начать с вами случайный чат. Принять?",
             reply_markup=accept_kb
         )
+        await call.message.edit_text("📩 Запрос отправлен пользователю. Ожидайте ответа...")
     except:
         await call.message.edit_text("Не удалось отправить запрос. Попробуйте позже.", reply_markup=catalog_kb())
-        await state.clear()
 
 # ---------- Основной поиск ----------
 @router.callback_query(F.data == "random_chat")
@@ -103,7 +97,7 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
         # 2. Ищем пассивного пользователя с allow_random_chat=1
         available_user = await find_available_user(session, exclude_user_id=user_id)
         if available_user:
-            await _send_chat_request(call, available_user.telegram_id, state)
+            await _send_chat_request(call, available_user.telegram_id)
             return
 
         # 3. Никого нет – встаём в очередь
@@ -118,41 +112,33 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
     await call.answer()
 
-# ---------- Обработка запроса ----------
-@router.callback_query(ChatRequestStates.waiting_for_accept, F.data == "accept_chat")
-async def accept_chat_request(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    requester_id = data.get("requester_id")
-    if not requester_id:
-        await call.answer("Данные устарели.")
-        return
-
+# ---------- Обработка запроса (глобальные колбэки) ----------
+@router.callback_query(F.data.startswith("accept_chat:"))
+async def accept_chat_request(call: types.CallbackQuery):
+    requester_id = int(call.data.split(":")[1])
     async with async_session() as session:
+        # Проверяем, не в чате ли уже кто-то из них
         if await get_active_chat_by_user(session, call.from_user.id) or await get_active_chat_by_user(session, requester_id):
-            await call.answer("Кто-то уже в чате.")
-            await state.clear()
+            await call.answer("Кто-то уже в чате.", show_alert=True)
             return
         chat = await create_active_chat(session, requester_id, call.from_user.id)
+        # Уведомляем искателя
         try:
             await call.bot.send_message(requester_id, "🎲 Собеседник принял запрос! Начинайте общение.")
         except:
             pass
         await call.message.edit_text("Вы приняли запрос. Сейчас начнётся чат.", reply_markup=None)
         await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
-    await state.clear()
     await call.answer()
 
-@router.callback_query(ChatRequestStates.waiting_for_accept, F.data == "decline_chat")
-async def decline_chat_request(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    requester_id = data.get("requester_id")
-    if requester_id:
-        try:
-            await call.bot.send_message(requester_id, "📩 Пользователь отклонил запрос. Вы вернулись в меню.")
-        except:
-            pass
+@router.callback_query(F.data.startswith("decline_chat:"))
+async def decline_chat_request(call: types.CallbackQuery):
+    requester_id = int(call.data.split(":")[1])
+    try:
+        await call.bot.send_message(requester_id, "📩 Пользователь отклонил запрос. Вы вернулись в меню.")
+    except:
+        pass
     await call.message.edit_text("Вы отклонили запрос.", reply_markup=None)
-    await state.clear()
     await call.answer()
 
 # ---------- Быстрые кнопки и завершение ----------

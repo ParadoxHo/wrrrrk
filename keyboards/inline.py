@@ -58,7 +58,7 @@ def catalog_kb():
     for key, sc in SCENARIOS.items():
         buttons.append([InlineKeyboardButton(text=sc["name"], callback_data=f"scenario_{key}")])
     buttons.append([InlineKeyboardButton(text="🎲 Случайный чат", callback_data="random_chat")])
-    buttons.append([InlineKeyboardButton(text="⚙️ Настройки случайного чата", callback_data="toggle_random_chat")])
+    buttons.append([InlineKeyboardButton(text="🔔 Принимать запросы на чат", callback_data="toggle_random_chat")])
     buttons.append([InlineKeyboardButton(text="✨ Создать свой сценарий", callback_data="custom_scenario")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

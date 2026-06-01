@@ -10,6 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True, nullable=False)
     username = Column(String, nullable=True)
+    allow_random_chat = Column(Integer, default=0)  # 0 - выключено, 1 - включено
     created_at = Column(DateTime, default=datetime.utcnow)
     interviews = relationship("Interview", back_populates="user", lazy="dynamic")
     stats = relationship("UserStats", back_populates="user", uselist=False)
@@ -49,7 +50,7 @@ class ChatQueue(Base):
     __tablename__ = 'chat_queue'
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    joined_at = Column(DateTime, default=datetime.utcnow)
 
 class ActiveChat(Base):
     __tablename__ = 'active_chats'

@@ -33,8 +33,6 @@ def resume_skip_kb():
         [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_resume")]
     ])
 
-# vacancy_kb() удалена
-
 def interview_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💡 Подсказка", callback_data="hint"),
@@ -42,25 +40,28 @@ def interview_kb():
     ])
 
 def hint_kb():
-    """Кнопка подсказки для социальных сценариев"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💡 Подсказка", callback_data="social_hint")]
     ])
 
 def rating_kb():
-    """Кнопки оценки сценария"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👍 Понравилось", callback_data="rate_like"),
          InlineKeyboardButton(text="👎 Не понравилось", callback_data="rate_dislike")]
     ])
 
 def catalog_kb():
-    """Единый каталог с фиксированным набором сценариев"""
     from handlers.social_sim import SCENARIOS
     buttons = [
         [InlineKeyboardButton(text="💼 Собеседование", callback_data="scenario_interview")]
     ]
     for key, sc in SCENARIOS.items():
         buttons.append([InlineKeyboardButton(text=sc["name"], callback_data=f"scenario_{key}")])
+    buttons.append([InlineKeyboardButton(text="🎲 Случайный чат", callback_data="random_chat")])
     buttons.append([InlineKeyboardButton(text="✨ Создать свой сценарий", callback_data="custom_scenario")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def cancel_search_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить поиск", callback_data="cancel_search")]
+    ])

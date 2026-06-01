@@ -8,8 +8,24 @@ from database.crud import (
 )
 from keyboards.inline import catalog_kb, cancel_search_kb
 from keyboards.reply import commands_keyboard
+from handlers.start import show_catalog, help_handler
+from handlers.stats import stats as stats_handler
 
 router = Router()
+
+# ---------- Вспомогательная функция: завершить чат и уведомить партнёра ----------
+async def _end_chat_and_notify(bot, user_id: int):
+    async with async_session() as session:
+        chat = await get_active_chat_by_user(session, user_id)
+        if not chat:
+            return
+        partner_id = chat.user2_id if user_id == chat.user1_id else chat.user1_id
+        await end_active_chat(session, chat.id)
+        partner_user = await get_or_create_user(session, partner_id)
+        try:
+            await bot.send_message(partner_user.telegram_id, "🔚 Собеседник завершил чат.")
+        except:
+            pass
 
 # ---------- Вход в случайный чат ----------
 @router.callback_query(F.data == "random_chat")
@@ -42,7 +58,7 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
                 await call.bot.send_message(
                     partner_user.telegram_id,
                     "🎲 Собеседник найден! Можете начинать общение.\n"
-                    "Команда /stop или кнопка «❌ Завершить» — выйти из чата.",
+                    "Кнопки «Главная» и «Завершить» закроют чат, остальные кнопки работают без выхода.",
                     reply_markup=commands_keyboard()
                 )
             except Exception:
@@ -53,7 +69,7 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
 
             await call.message.edit_text(
                 "🎲 Собеседник найден! Можете начинать общение.\n"
-                "Команда /stop или кнопка «❌ Завершить» — выйти из чата."
+                "Кнопки «Главная» и «Завершить» закроют чат, остальные кнопки работают без выхода."
             )
             await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
         else:
@@ -71,7 +87,24 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
     await call.answer()
 
-# ---------- Завершение чата (проверяется ПЕРЕД пересылкой сообщений) ----------
+# ---------- Кнопки быстрого доступа ----------
+@router.message(F.text == "🏠 Главная")
+async def main_menu_from_chat(msg: types.Message, state: FSMContext):
+    # Завершаем чат и возвращаем в каталог
+    await _end_chat_and_notify(msg.bot, msg.from_user.id)
+    await show_catalog(msg, state)
+
+@router.message(F.text == "📊 Статистика")
+async def stats_from_chat(msg: types.Message):
+    # Чат не завершаем, просто показываем статистику
+    await stats_handler(msg)
+
+@router.message(F.text == "ℹ️ Помощь")
+async def help_from_chat(msg: types.Message, state: FSMContext):
+    # Чат не завершаем, показываем справку
+    await help_handler(msg, state)
+
+# ---------- Явное завершение чата ----------
 @router.message(Command("stop"))
 @router.message(Command("finish"))
 @router.message(F.text == "❌ Завершить")
@@ -91,8 +124,8 @@ async def stop_chat(msg: types.Message):
         await msg.answer("🔚 Чат завершён.", reply_markup=catalog_kb())
         await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
-# ---------- Пересылка сообщений (только если не команда и не кнопка выхода) ----------
-@router.message(F.text & ~F.text.startswith("/"), F.text != "❌ Завершить")
+# ---------- Пересылка сообщений (исключаем команды и системные кнопки) ----------
+@router.message(F.text & ~F.text.startswith("/"), F.text.notin_(["🏠 Главная", "📊 Статистика", "ℹ️ Помощь", "❌ Завершить"]))
 async def handle_chat_message(msg: types.Message):
     async with async_session() as session:
         chat = await get_active_chat_by_user(session, msg.from_user.id)

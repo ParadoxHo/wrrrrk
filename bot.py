@@ -8,6 +8,7 @@ from handlers.interview_setup import router as setup_router
 from handlers.interview import router as interview_router
 from handlers.stats import router as stats_router
 from handlers.social_sim import router as social_router
+from handlers.random_chat import router as random_chat_router
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -15,6 +16,7 @@ dp = Dispatcher()
 
 async def main():
     await init_db()
+    dp.include_router(random_chat_router)  # первым, чтобы ловил сообщения чата
     dp.include_router(start_router)
     dp.include_router(setup_router)
     dp.include_router(interview_router)

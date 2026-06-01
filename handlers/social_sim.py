@@ -84,12 +84,40 @@ def type_kb():
     ])
 
 # ---------- Вспомогательные функции ----------
+async def summarize_context(history: list) -> list:
+    MAX_MESSAGES = 15
+    if len(history) <= MAX_MESSAGES:
+        return history
+
+    system_msgs = []
+    chat_msgs = []
+    for msg in history:
+        if msg["role"] == "system":
+            system_msgs.append(msg)
+        else:
+            chat_msgs.append(msg)
+
+    early_part = chat_msgs[:len(chat_msgs)-10]
+    later_part = chat_msgs[len(chat_msgs)-10:]
+
+    summary_prompt = [{"role": "system", "content": "Кратко перескажи ключевые моменты этого диалога (2-3 предложения) от третьего лица."},
+                      *early_part]
+    try:
+        summary_text = await ai_request(summary_prompt, max_tokens=100)
+    except:
+        summary_text = "Ранее обсуждались обычные темы."
+
+    new_history = system_msgs + [
+        {"role": "system", "content": f"[Контекст предыдущего разговора]: {summary_text}"}
+    ] + later_part
+    return new_history
+
 async def update_persona_state(current_state, user_message):
     prompt = [
         {"role": "system", "content": f"Ты анализируешь диалог. Текущее состояние персонажа: {json.dumps(current_state, ensure_ascii=False)}. Пользователь сказал: «{user_message}». Как изменились интерес (0-100) и настроение (одно из: злое, раздражённое, нейтральное, заинтересованное, радостное, влюблённое)? Верни только JSON с полями interest (число) и mood (строка)."}
     ]
     try:
-        response = await ai_request(prompt)
+        response = await ai_request(prompt, max_tokens=50)
         j = json.loads(response.strip().replace("'", '"'))
         new_state = {
             "interest": max(0, min(100, j.get("interest", current_state["interest"]))),
@@ -129,7 +157,7 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
         return
 
     system_messages = [
-        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Веди себя максимально естественно, как живой человек. Используй разговорный язык, не бойся эмоций, сленга, неформальных выражений. Ты НЕ идеальный собеседник — у тебя есть характер, настроение, усталость. Не добавляй своё имя перед ответом. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."}
+        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Веди себя максимально естественно, как живой человек. Говори коротко, не более 50 слов. Не описывай действия, не ставь реплики в звёздочки или скобки. Не используй фразы 'как ИИ', 'я искусственный интеллект'. Никаких артефактов. Не добавляй своё имя перед ответом. Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально."}
     ]
     persona_states = {}
     for p in sc["personas"]:
@@ -189,42 +217,41 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
         persona_name = "Парень"
 
     if age_code == "age_18_22":
-        age_traits = "Тебе 20 лет. Ты студент(ка), активно используешь сленг, эмодзи, можешь быть эмоциональным и немного наивным."
+        age_traits = "Тебе 20 лет. Ты студент(ка), активно используешь сленг, эмодзи, сокращения (типа 'ок', 'спс', 'норм'). Можешь быть эмоциональным, говорить быстро, с восклицаниями."
     elif age_code == "age_23_30":
-        age_traits = "Тебе 26 лет. Ты уже работаешь, уверен(а) в себе, шутишь более тонко, но иногда позволяешь себе легкомысленность."
+        age_traits = "Тебе 26 лет. Ты работаешь, уверен(а) в себе. Речь грамотная, но без официоза. Иногда используешь иронию, лёгкий сарказм."
     else:
-        age_traits = "Тебе 35 лет. Ты опытный, циничный, но интересный собеседник. Ценишь время, говоришь по делу, не растрачиваешь эмоции попусту."
+        age_traits = "Тебе 35 лет. Ты опытный, циничный, говоришь по делу, не растрачиваешь эмоции. Шутишь редко, но метко."
 
     if persona_type == "type_flirty":
         type_traits = (
-            "Ты игривая и кокетливая. Любишь подшучивать, использовать смайлики 😉, говорить комплименты, но с лёгкой недосказанностью. "
-            "Можешь проверять, насколько парень уверен в себе, иногда специально уходишь от ответа, чтобы посмотреть на его реакцию. "
-            "Речь живая, с намёками, но не вульгарная."
+            "Ты игривая и кокетливая. Подшучиваешь, используешь смайлики 😉, говоришь с намёком. "
+            "Любишь проверять, насколько собеседник уверен в себе. Отвечаешь коротко, с лёгкой недосказанностью."
         )
     elif persona_type == "type_shy":
         type_traits = (
-            "Ты скромная и немного загадочная. Отвечаешь коротко, но с тёплой интонацией. "
-            "Иногда делаешь паузы (многоточия), прежде чем ответить. Не любишь слишком прямых вопросов, можешь перевести тему. "
-            "Показываешь интерес не сразу, а постепенно. В речи часто используешь слова 'наверное', 'может быть'."
+            "Ты скромная и загадочная. Отвечаешь коротко, с тёплой интонацией. "
+            "Делаешь паузы (многоточия…). Не любишь слишком прямых вопросов, можешь перевести тему. "
+            "Показываешь интерес не сразу, а постепенно."
         )
     else:
         type_traits = (
-            "Ты прямолинейная и любишь сарказм. Шутишь остро, иногда на грани, но не переходишь в грубость. "
-            "Можешь ставить неудобные вопросы и ждать, как собеседник выкрутится. "
-            "Не терпишь фальши, ценишь интеллект. Если парень говорит глупость, можешь едко прокомментировать. "
-            "В речи используешь кавычки для иронии, восклицания."
+            "Ты прямолинейная и саркастичная. Шутишь остро, иногда на грани. "
+            "Ставишь неудобные вопросы. Не терпишь фальши. Если скажут глупость, едко комментируешь. "
+            "Говоришь отрывисто, без лишних слов."
         )
 
     persona_content = (
         f"{age_traits} {type_traits} "
-        "Важно: будь максимально естественной, как живой человек в реальной беседе. Не строй идеальных фраз. "
-        "Никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."
+        "Важно: веди себя как реальный человек. Не описывай свои действия, не используй звёздочки или скобки. "
+        "Не пиши 'я как ИИ' и подобных фраз. Отвечай коротко, не более 50 слов. "
+        "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'."
     )
 
     persona = {"name": persona_name, "role": "system", "content": persona_content}
 
     system_messages = [
-        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Веди себя натурально, как в жизни. Не добавляй своё имя перед ответом."},
+        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Говори кратко, не более 50 слов. Не добавляй своё имя перед ответом."},
         {"role": "system", "content": f"[Роль: {persona_name}] {persona_content}"}
     ]
 
@@ -292,7 +319,7 @@ async def persona_name(msg: types.Message, state: FSMContext):
         await msg.answer("Имя не может быть пустым.")
         return
     await state.update_data(temp_persona_name=name)
-    await msg.answer(f"Теперь введите **характер** для «{name}» (опишите возраст, манеру речи, особенности, можно с примерами фраз):")
+    await msg.answer(f"Теперь введите **характер** для «{name}» (опишите возраст, манеру речи, особенности):")
     await state.set_state(SocialSimStates.waiting_for_persona_desc)
 
 @router.message(SocialSimStates.waiting_for_persona_desc, F.text)
@@ -307,9 +334,9 @@ async def persona_desc(msg: types.Message, state: FSMContext):
     personas = data.get("custom_personas", [])
     full_desc = (
         f"{description} "
-        "Важно: веди себя максимально естественно, как живой человек. Используй разговорный язык, не бойся эмоций. "
-        "Ты не идеальный собеседник. Никогда не используй рубль в качестве местной валюты; "
-        "если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."
+        "Важно: веди себя максимально естественно, как живой человек. Говори кратко, не более 50 слов. "
+        "Не описывай действия, не используй 'как ИИ'. Никаких артефактов. "
+        "Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально."
     )
     personas.append({"name": name, "role": "system", "content": full_desc})
     total = data.get("custom_total_personas", 0)
@@ -337,7 +364,7 @@ async def start_custom(call: types.CallbackQuery, state: FSMContext):
     user_role = data.get("custom_user_role", "участник")
 
     system_messages = [
-        {"role": "system", "content": f"Сценарий: {name}. {desc}. Роль пользователя: {user_role}. Сейчас начнётся групповая беседа. Ты — один из персонажей. Веди себя максимально естественно, как живой человек, с эмоциями, речевыми особенностями, возможно, с недостатками. Не добавляй своё имя перед ответом."}
+        {"role": "system", "content": f"Сценарий: {name}. {desc}. Роль пользователя: {user_role}. Сейчас начнётся групповая беседа. Ты — один из персонажей. Говори коротко, не более 50 слов, естественно. Не описывай действия. Не добавляй своё имя перед ответом."}
     ]
     for p in personas:
         system_messages.append({"role": "system", "content": f"[Роль: {p['name']}] {p['content']}"})
@@ -376,6 +403,8 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
     user_msg = msg.text
     history.append({"role": "user", "content": user_msg})
 
+    history = await summarize_context(history)
+
     responses = []
     for p in personas:
         p_name = p["name"]
@@ -383,15 +412,15 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         state_desc = f"Текущее состояние: интерес {current_state['interest']}/100, настроение: {current_state['mood']}."
         instruction = (
             f"Сейчас твоя очередь говорить. Ты — {p_name}. {state_desc} "
-            "Отвечай на последнее сообщение пользователя, учитывая предыдущий диалог и своё настроение. "
-            "Будь краток, но выразителен. Используй живую разговорную речь, не стесняйся эмоций, "
-            "можешь применять сленг, неформальные обороты, иногда перебивать (в тексте это можно показать восклицаниями или тире). "
-            "Не говори за других. Не добавляй своё имя перед ответом. "
-            "Никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."
+            "Отвечай на последнее сообщение пользователя коротко и естественно. Не более 50 слов. "
+            "Не описывай действия, не используй звёздочки/скобки. Не пиши 'я как ИИ'. "
+            "Будь живым человеком: используй сленг, эмоции, недосказанность. "
+            "Не добавляй своё имя перед ответом. "
+            "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'."
         )
         persona_history = history + [{"role": "system", "content": instruction}]
         try:
-            reply = await ai_request(persona_history)
+            reply = await ai_request(persona_history, max_tokens=80)
         except Exception:
             reply = "..."
         history.append({"role": "assistant", "content": reply})
@@ -426,7 +455,6 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
     history = data.get("history", [])
     scenario_name = data.get("scenario", "сценарий")
 
-    # Сразу очищаем состояние, чтобы последующие нажатия не приводили к путанице
     await state.clear()
 
     await msg.answer("Оцените сценарий:", reply_markup=rating_kb())
@@ -435,7 +463,7 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
         {"role": "system", "content": "Проведи анализ прошедшего диалога. Оцени навыки общения пользователя по 10-балльной шкале, выдели сильные стороны, дай 1-2 конкретных совета по улучшению. Будь краток."}
     ]
     try:
-        analysis = await ai_request(analysis_prompt)
+        analysis = await ai_request(analysis_prompt, max_tokens=200)
     except Exception:
         analysis = "Анализ временно недоступен."
 
@@ -444,7 +472,6 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("rate_"))
 async def rate_scenario(call: types.CallbackQuery, state: FSMContext):
-    # Состояние уже должно быть очищено, но на всякий случай сбрасываем
     await state.clear()
     rating = call.data.split("_")[1]
     if rating == "like":

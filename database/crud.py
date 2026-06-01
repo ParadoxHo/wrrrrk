@@ -1,11 +1,6 @@
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from .models import User, Interview, UserStats, ChatQueue, ActiveChat
-from sqlalchemy import and_
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 from sqlalchemy import and_
 from .models import User, Interview, UserStats, ChatQueue, ActiveChat
 
@@ -64,7 +59,7 @@ async def remove_from_chat_queue(session: AsyncSession, user_id: int):
 
 async def get_random_user_from_queue(session: AsyncSession, exclude_user_id: int):
     result = await session.execute(
-        select(ChatQueue).where(ChatQueue.user_id != exclude_user_id).order_by(ChatQueue.created_at).limit(1)
+        select(ChatQueue).where(ChatQueue.user_id != exclude_user_id).order_by(ChatQueue.joined_at).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -91,3 +86,50 @@ async def end_active_chat(session: AsyncSession, chat_id: int):
         chat.active = 0
         await session.commit()
     return chat
+
+async def set_allow_random_chat(session: AsyncSession, user_id: int, value: bool):
+    user = await session.get(User, user_id)
+    if user:
+        user.allow_random_chat = 1 if value else 0
+        await session.commit()
+
+async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int):
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    return result.scalar_one_or_none()
+
+async def find_available_user(session: AsyncSession, exclude_user_id: int):
+    """Находит пользователя, у которого allow_random_chat=1, который не в активном чате и не в очереди."""
+    result = await session.execute(
+        select(User).where(User.allow_random_chat == 1, User.telegram_id != exclude_user_id)
+    )
+    candidates = result.scalars().all()
+    for user in candidates:
+        # Проверяем активный чат
+        chat = await get_active_chat_by_user(session, user.telegram_id)
+        if chat:
+            continue
+        # Проверяем очередь
+        queue_entry = await session.execute(select(ChatQueue).where(ChatQueue.user_id == user.id))
+        if queue_entry.scalar_one_or_none():
+            continue
+        return user
+    return None
+
+async def cleanup_expired_queue(session: AsyncSession, timeout_minutes: int = 5, bot=None):
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(minutes=timeout_minutes)
+    result = await session.execute(
+        select(ChatQueue).where(ChatQueue.joined_at < cutoff)
+    )
+    expired = result.scalars().all()
+    for entry in expired:
+        await session.delete(entry)
+        if bot:
+            try:
+                await bot.send_message(
+                    entry.user_id,
+                    "⌛ За 5 минут никто не подключился. Поиск остановлен. Вы можете попробовать снова позже."
+                )
+            except Exception:
+                pass
+    await session.commit()

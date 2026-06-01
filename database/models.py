@@ -44,3 +44,17 @@ class UserStats(Base):
     recommendations = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="stats")
+
+class ChatQueue(Base):
+    __tablename__ = 'chat_queue'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ActiveChat(Base):
+    __tablename__ = 'active_chats'
+    id = Column(Integer, primary_key=True)
+    user1_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user2_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    active = Column(Integer, default=1)

@@ -19,6 +19,7 @@ router = Router()
 class ChatRequestStates(StatesGroup):
     waiting_for_accept = State()
 
+# ---------- Вспомогательные функции ----------
 async def _create_chat_and_notify(call, partner_telegram_id):
     async with async_session() as session:
         chat = await create_active_chat(session, call.from_user.id, partner_telegram_id)
@@ -71,7 +72,7 @@ async def _send_chat_request(call, partner_telegram_id, state: FSMContext):
         await call.message.edit_text("Не удалось отправить запрос. Попробуйте позже.", reply_markup=catalog_kb())
         await state.clear()
 
-# ---------- основной поиск ----------
+# ---------- Основной поиск ----------
 @router.callback_query(F.data == "random_chat")
 async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -109,6 +110,7 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
         await add_to_chat_queue(session, user_id)
         await call.message.edit_text("🔍 Ищем собеседника... Ожидайте.", reply_markup=cancel_search_kb())
 
+# ---------- Отмена поиска ----------
 @router.callback_query(F.data == "cancel_search")
 async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     async with async_session() as session:
@@ -116,7 +118,7 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
     await call.answer()
 
-# ---------- обработка запроса ----------
+# ---------- Обработка запроса ----------
 @router.callback_query(ChatRequestStates.waiting_for_accept, F.data == "accept_chat")
 async def accept_chat_request(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -153,7 +155,7 @@ async def decline_chat_request(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# ---------- быстрые кнопки и завершение ----------
+# ---------- Быстрые кнопки и завершение ----------
 @router.message(F.text == "🏠 Главная")
 async def main_menu_from_chat(msg: types.Message, state: FSMContext):
     await _end_chat_and_notify(msg.bot, msg.from_user.id)
@@ -186,6 +188,7 @@ async def stop_chat(msg: types.Message):
         await msg.answer("🔚 Чат завершён.", reply_markup=catalog_kb())
         await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
+# ---------- Пересылка сообщений ----------
 @router.message(F.text & ~F.text.startswith("/"), F.text.notin_(["🏠 Главная", "📊 Статистика", "ℹ️ Помощь", "❌ Завершить"]))
 async def handle_chat_message(msg: types.Message):
     async with async_session() as session:
@@ -202,17 +205,19 @@ async def handle_chat_message(msg: types.Message):
             await msg.answer("Чат завершён.", reply_markup=catalog_kb())
             await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
-# ---------- настройка allow_random_chat ----------
+# ---------- Настройка allow_random_chat ----------
 @router.callback_query(F.data == "toggle_random_chat")
 async def toggle_random_chat(call: types.CallbackQuery):
     async with async_session() as session:
         user = await get_or_create_user(session, call.from_user.id, call.from_user.username)
         new_value = not user.allow_random_chat
         await set_allow_random_chat(session, user.id, new_value)
-        status_text = "включён ✅" if new_value else "выключен ❌"
+        if new_value:
+            status_text = "включён ✅\nТеперь другие пользователи могут найти вас и предложить чат."
+        else:
+            status_text = "выключен ❌\nВы в безопасности — вас никто не побеспокоит."
         await call.message.edit_text(
-            f"🔔 Приём запросов на случайный чат: {status_text}.\n"
-            "Теперь другие пользователи могут найти вас и предложить чат.",
+            f"🔔 Приём запросов на случайный чат: {status_text}",
             reply_markup=catalog_kb()
         )
         await call.answer()

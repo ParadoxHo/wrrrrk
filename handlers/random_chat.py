@@ -69,11 +69,8 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
     await call.answer()
 
-@router.message(F.text)
+@router.message(F.text & ~F.text.startswith("/"))
 async def handle_chat_message(msg: types.Message):
-    if msg.text.startswith("/stop") or msg.text.startswith("/finish"):
-        return
-
     async with async_session() as session:
         chat = await get_active_chat_by_user(session, msg.from_user.id)
         if not chat:

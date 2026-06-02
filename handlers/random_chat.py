@@ -16,9 +16,7 @@ from handlers.stats import stats as stats_handler
 router = Router()
 
 async def _create_chat_and_notify(call, partner_telegram_id, partner_db_id: int):
-    """Создаёт чат между инициатором и партнёром, уведомляет обоих."""
     async with async_session() as session:
-        # Получаем внутренний ID инициатора
         initiator = await get_or_create_user(session, call.from_user.id)
         chat = await create_active_chat(session, initiator.id, partner_db_id)
         try:
@@ -36,7 +34,6 @@ async def _create_chat_and_notify(call, partner_telegram_id, partner_db_id: int)
         await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
 async def _end_chat_and_notify(bot, user_telegram_id: int):
-    """Завершает активный чат пользователя и уведомляет партнёра."""
     async with async_session() as session:
         user = await get_or_create_user(session, user_telegram_id)
         chat = await get_active_chat_by_user(session, user.id)
@@ -44,7 +41,6 @@ async def _end_chat_and_notify(bot, user_telegram_id: int):
             return
         partner_id = chat.user2_id if user.id == chat.user1_id else chat.user1_id
         await end_active_chat(session, chat.id)
-        # Получаем telegram_id партнёра для уведомления
         from database.models import User
         partner = await session.get(User, partner_id)
         if partner:
@@ -54,7 +50,6 @@ async def _end_chat_and_notify(bot, user_telegram_id: int):
                 pass
 
 async def _send_chat_request(call, partner_telegram_id: int, requester_db_id: int):
-    """Отправляет запрос пассивному пользователю."""
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     accept_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принять", callback_data=f"accept_chat:{requester_db_id}"),
@@ -94,14 +89,13 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
         if partner:
             await remove_from_chat_queue(session, user.id)
             await remove_from_chat_queue(session, partner.user_id)
-            # Получаем telegram_id партнёра
             from database.models import User as DBUser
             partner_user = await session.get(DBUser, partner.user_id)
             if partner_user:
                 await _create_chat_and_notify(call, partner_user.telegram_id, partner.user_id)
             return
 
-        # 2. Ищем пассивного пользователя с allow_random_chat=1
+        # 2. Ищем пассивного пользователя с allow_random_chat=1 (исключая себя)
         available_user = await find_available_user(session, exclude_user_id=user.id)
         if available_user:
             await _send_chat_request(call, available_user.telegram_id, user.id)
@@ -120,7 +114,7 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Поиск отменён.", reply_markup=catalog_kb())
     await call.answer()
 
-# ---------- Обработка запроса (глобальные колбэки) ----------
+# ---------- Обработка запроса ----------
 @router.callback_query(F.data.startswith("accept_chat:"))
 async def accept_chat_request(call: types.CallbackQuery):
     requester_db_id = int(call.data.split(":")[1])
@@ -130,7 +124,6 @@ async def accept_chat_request(call: types.CallbackQuery):
             await call.answer("Кто-то уже в чате.", show_alert=True)
             return
         chat = await create_active_chat(session, requester_db_id, user.id)
-        # Уведомляем искателя
         from database.models import User as DBUser
         requester = await session.get(DBUser, requester_db_id)
         if requester:

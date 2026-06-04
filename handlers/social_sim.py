@@ -127,6 +127,12 @@ async def update_persona_state(current_state, user_message):
     except:
         return current_state
 
+def get_dynamic_tokens(interest: int) -> int:
+    """Рассчитывает max_tokens на основе интереса: от 10 (интерес 0) до 50 (интерес 100)."""
+    base = 10
+    max_extra = 40
+    return base + int((interest / 100) * max_extra)
+
 # ---------- Обработчики ----------
 @router.callback_query(F.data == "scenario_interview")
 async def interview_chosen(call: types.CallbackQuery, state: FSMContext):
@@ -223,7 +229,7 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     else:
         age_traits = "Тебе 35 лет. Ты опытный, циничный, говоришь по делу, не растрачиваешь эмоции. Шутишь редко, но метко."
 
-    # Базовое поведение при знакомстве: нейтрально-оценивающее
+    # Базовое поведение при знакомстве
     base_behavior = (
         "Ты не проявляешь симпатию сразу. Сначала оцениваешь собеседника. "
         "Можешь быть немного холодна, отвечать коротко. Интерес растёт постепенно."
@@ -251,14 +257,14 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     persona_content = (
         f"{age_traits} {base_behavior} {type_traits} "
         "Важно: веди себя как реальный человек. Не описывай свои действия, не используй звёздочки или скобки. "
-        "Не пиши 'я как ИИ' и подобных фраз. Отвечай коротко, не более 50 слов. "
+        "Не пиши 'я как ИИ' и подобных фраз. Отвечай коротко. "
         "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'."
     )
 
     persona = {"name": persona_name, "role": "system", "content": persona_content}
 
     system_messages = [
-        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Говори кратко, не более 50 слов. Не добавляй своё имя перед ответом."},
+        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Говори кратко. Не добавляй своё имя перед ответом."},
         {"role": "system", "content": f"[Роль: {persona_name}] {persona_content}"}
     ]
 
@@ -280,10 +286,7 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
-# ---------- Кастомный сценарий (без изменений) ----------
-# ... весь остальной код остаётся прежним, начиная с custom_scenario_start и до конца файла.
-# Ниже приведены оставшиеся функции без изменений.
-
+# ---------- Кастомный сценарий ----------
 @router.callback_query(F.data == "custom_scenario")
 async def custom_scenario_start(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("Давайте создадим ваш уникальный сценарий.\nСначала введите **название** (одним сообщением):")
@@ -420,10 +423,24 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
     for p in personas:
         p_name = p["name"]
         current_state = persona_states.get(p_name, {"interest": 50, "mood": "нейтральное"})
-        state_desc = f"Текущее состояние: интерес {current_state['interest']}/100, настроение: {current_state['mood']}."
+        interest = current_state["interest"]
+        mood = current_state["mood"]
+
+        # Динамический max_tokens в зависимости от интереса
+        dyn_tokens = get_dynamic_tokens(interest)
+
+        # Усиление инструкции по длине в зависимости от интереса
+        if interest < 40:
+            length_hint = "Отвечай максимально коротко (1–5 слов). Не задавай вопросов, будь сдержана."
+        elif interest < 70:
+            length_hint = "Отвечай коротко, но можешь проявить чуть больше эмоций. 5–15 слов."
+        else:
+            length_hint = "Можешь ответить развёрнуто, но не более 50 слов. Будь дружелюбнее."
+
+        state_desc = f"Интерес: {interest}/100, настроение: {mood}."
         instruction = (
             f"Сейчас твоя очередь говорить. Ты — {p_name}. {state_desc} "
-            "Отвечай на последнее сообщение пользователя коротко и естественно. Не более 50 слов. "
+            f"{length_hint} "
             "Не описывай действия, не используй звёздочки/скобки. Не пиши 'я как ИИ'. "
             "Будь живым человеком: используй сленг, эмоции, недосказанность. "
             "Не добавляй своё имя перед ответом. "
@@ -431,7 +448,7 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         )
         persona_history = history + [{"role": "system", "content": instruction}]
         try:
-            reply = await ai_request(persona_history, max_tokens=80)
+            reply = await ai_request(persona_history, max_tokens=dyn_tokens)
         except Exception:
             reply = "..."
         history.append({"role": "assistant", "content": reply})

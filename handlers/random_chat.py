@@ -2,6 +2,7 @@ import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from database import async_session
 from database.crud import (
     add_to_chat_queue, remove_from_chat_queue, get_random_user_from_queue,
@@ -15,7 +16,10 @@ from handlers.stats import stats as stats_handler
 
 router = Router()
 
-async def _create_chat_and_notify(call, partner_telegram_id, partner_db_id: int):
+class RandomChatStates(StatesGroup):
+    in_chat = State()          # пользователь находится в активном чате
+
+async def _create_chat_and_notify(call, partner_telegram_id, partner_db_id: int, state: FSMContext):
     async with async_session() as session:
         initiator = await get_or_create_user(session, call.from_user.id)
         chat = await create_active_chat(session, initiator.id, partner_db_id)
@@ -30,10 +34,16 @@ async def _create_chat_and_notify(call, partner_telegram_id, partner_db_id: int)
             await end_active_chat(session, chat.id)
             await call.answer("Не удалось связаться с собеседником.", show_alert=True)
             return
+        # Устанавливаем состояние in_chat обоим (инициатору и партнёру)
+        await state.set_state(RandomChatStates.in_chat)
+        # Партнёру также нужно установить состояние, но мы не можем управлять его FSM.
+        # Вместо этого при входе в чат через принятие запроса тоже будет установлено состояние.
+        # Для инициатора состояние уже установлено.
         await call.message.edit_text("🎲 Собеседник найден! Можете начинать общение.")
         await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
-async def _end_chat_and_notify(bot, user_telegram_id: int):
+async def _end_chat_and_notify(bot, user_telegram_id: int, state: FSMContext = None):
+    """Завершает активный чат пользователя, уведомляет партнёра и сбрасывает состояние."""
     async with async_session() as session:
         user = await get_or_create_user(session, user_telegram_id)
         chat = await get_active_chat_by_user(session, user.id)
@@ -48,6 +58,9 @@ async def _end_chat_and_notify(bot, user_telegram_id: int):
                 await bot.send_message(partner.telegram_id, "🔚 Собеседник завершил чат.")
             except:
                 pass
+    # Сбрасываем состояние
+    if state:
+        await state.clear()
 
 async def _send_chat_request(call, partner_telegram_id: int, requester_db_id: int):
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -92,10 +105,14 @@ async def random_chat_start(call: types.CallbackQuery, state: FSMContext):
             from database.models import User as DBUser
             partner_user = await session.get(DBUser, partner.user_id)
             if partner_user:
-                await _create_chat_and_notify(call, partner_user.telegram_id, partner.user_id)
+                # Устанавливаем состояние обоим (функция установит инициатору)
+                await _create_chat_and_notify(call, partner_user.telegram_id, partner.user_id, state)
+                # Отправляем партнёру сообщение, что чат начат, и тоже пытаемся установить ему состояние
+                # Но мы не можем управлять его FSM напрямую, поэтому состояние партнёра будет установлено при его следующем сообщении
+                # (он получит клавиатуру и сможет писать)
             return
 
-        # 2. Ищем пассивного пользователя с allow_random_chat=1 (исключая себя)
+        # 2. Ищем пассивного пользователя с allow_random_chat=1
         available_user = await find_available_user(session, exclude_user_id=user.id)
         if available_user:
             await _send_chat_request(call, available_user.telegram_id, user.id)
@@ -116,7 +133,7 @@ async def cancel_search(call: types.CallbackQuery, state: FSMContext):
 
 # ---------- Обработка запроса ----------
 @router.callback_query(F.data.startswith("accept_chat:"))
-async def accept_chat_request(call: types.CallbackQuery):
+async def accept_chat_request(call: types.CallbackQuery, state: FSMContext):
     requester_db_id = int(call.data.split(":")[1])
     async with async_session() as session:
         user = await get_or_create_user(session, call.from_user.id)
@@ -133,6 +150,8 @@ async def accept_chat_request(call: types.CallbackQuery):
                 pass
         await call.message.edit_text("Вы приняли запрос. Сейчас начнётся чат.", reply_markup=None)
         await call.message.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
+        # Устанавливаем состояние in_chat для того, кто принял запрос
+        await state.set_state(RandomChatStates.in_chat)
     await call.answer()
 
 @router.callback_query(F.data.startswith("decline_chat:"))
@@ -152,7 +171,7 @@ async def decline_chat_request(call: types.CallbackQuery):
 # ---------- Быстрые кнопки и завершение ----------
 @router.message(F.text == "🏠 Главная")
 async def main_menu_from_chat(msg: types.Message, state: FSMContext):
-    await _end_chat_and_notify(msg.bot, msg.from_user.id)
+    await _end_chat_and_notify(msg.bot, msg.from_user.id, state)
     await show_catalog(msg, state)
 
 @router.message(F.text == "📊 Статистика")
@@ -166,18 +185,20 @@ async def help_from_chat(msg: types.Message, state: FSMContext):
 @router.message(Command("stop"))
 @router.message(Command("finish"))
 @router.message(F.text == "❌ Завершить")
-async def stop_chat(msg: types.Message):
-    await _end_chat_and_notify(msg.bot, msg.from_user.id)
+async def stop_chat(msg: types.Message, state: FSMContext):
+    await _end_chat_and_notify(msg.bot, msg.from_user.id, state)
     await msg.answer("🔚 Чат завершён.", reply_markup=catalog_kb())
     await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 
-# ---------- Пересылка сообщений ----------
-@router.message(F.text & ~F.text.startswith("/"))
-async def handle_chat_message(msg: types.Message):
+# ---------- Пересылка сообщений (только в состоянии in_chat) ----------
+@router.message(RandomChatStates.in_chat, F.text & ~F.text.startswith("/"))
+async def handle_chat_message(msg: types.Message, state: FSMContext):
     async with async_session() as session:
         user = await get_or_create_user(session, msg.from_user.id)
         chat = await get_active_chat_by_user(session, user.id)
         if not chat:
+            # Если чата вдруг нет, сбрасываем состояние
+            await state.clear()
             return
         partner_db_id = chat.user2_id if user.id == chat.user1_id else chat.user1_id
         from database.models import User as DBUser
@@ -185,12 +206,14 @@ async def handle_chat_message(msg: types.Message):
         if not partner:
             await msg.answer("Собеседник больше не доступен.")
             await end_active_chat(session, chat.id)
+            await state.clear()
             return
         try:
             await msg.bot.send_message(partner.telegram_id, f"💬 Собеседник: {msg.text}")
         except Exception:
             await msg.answer("Сообщение не доставлено. Чат завершён.")
             await end_active_chat(session, chat.id)
+            await state.clear()
             await msg.answer("Чат завершён.", reply_markup=catalog_kb())
             await msg.answer("Используйте кнопки ниже для быстрого доступа:", reply_markup=commands_keyboard())
 

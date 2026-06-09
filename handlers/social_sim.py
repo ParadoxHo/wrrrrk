@@ -128,9 +128,9 @@ async def update_persona_state(current_state, user_message):
         return current_state
 
 def get_dynamic_tokens(interest: int) -> int:
-    """Рассчитывает max_tokens на основе интереса: от 20 (интерес 0) до 55 (интерес 100)."""
-    base = 20
-    max_extra = 35
+    """Рассчитывает max_tokens на основе интереса: от 40 (интерес 0) до 80 (интерес 100)."""
+    base = 40
+    max_extra = 40
     return base + int((interest / 100) * max_extra)
 
 # ---------- Обработчики ----------
@@ -232,7 +232,7 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     base_behavior = (
         "Ты не проявляешь симпатию сразу. Сначала оцениваешь собеседника. "
         "Можешь быть немного холодна, отвечать коротко. Интерес растёт постепенно. "
-        "Обязательно заканчивай предложения, не обрывай слова на полуслове."
+        "Всегда заканчивай предложения, не обрывай слова на полуслове."
     )
 
     if persona_type == "type_flirty":
@@ -425,10 +425,8 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         interest = current_state["interest"]
         mood = current_state["mood"]
 
-        # Динамический max_tokens в зависимости от интереса
         dyn_tokens = get_dynamic_tokens(interest)
 
-        # Усиление инструкции по длине и завершённости
         if interest < 40:
             length_hint = "Отвечай коротко (3–8 слов). Не задавай вопросов, будь сдержана."
         elif interest < 70:
@@ -448,7 +446,8 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         )
         persona_history = history + [{"role": "system", "content": instruction}]
         try:
-            reply = await ai_request(persona_history, max_tokens=dyn_tokens)
+            # Используем stop, чтобы гарантированно завершать предложения
+            reply = await ai_request(persona_history, max_tokens=dyn_tokens, stop=["\n\n", " .", " !", " ?"])
         except Exception:
             reply = "..."
         history.append({"role": "assistant", "content": reply})

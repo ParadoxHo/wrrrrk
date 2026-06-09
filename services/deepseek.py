@@ -6,8 +6,8 @@ from config import DEEPSEEK_API_KEY
 logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-async def ai_request(messages, max_retries=2, max_tokens=80):
-    """Запрос к DeepSeek с повторными попытками и ограничением длины ответа."""
+async def ai_request(messages, max_retries=2, max_tokens=80, stop=None):
+    """Запрос к DeepSeek с повторными попытками, ограничением длины и опциональной остановкой."""
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
@@ -15,7 +15,8 @@ async def ai_request(messages, max_retries=2, max_tokens=80):
                 model="deepseek-chat",
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=0.7
+                temperature=0.7,
+                stop=stop
             )
             return response.choices[0].message.content
         except Exception as e:

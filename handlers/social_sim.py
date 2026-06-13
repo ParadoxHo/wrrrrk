@@ -1,5 +1,5 @@
 import io, json
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -149,20 +149,25 @@ async def update_persona_state(current_state, user_message):
     except:
         return current_state
 
-async def check_apology(user_message: str) -> bool:
-    """Проверяет, содержит ли сообщение извинение или объяснение."""
-    apology_prompt = [
+async def evaluate_apology(user_message: str) -> int:
+    """
+    Оценивает, насколько убедительно извинение пользователя.
+    Возвращает оценку от 0 до 100, где 100 — идеальное извинение.
+    """
+    prompt = [
         {"role": "system", "content": (
-            "Проанализируй сообщение пользователя. Является ли оно искренним извинением или убедительным объяснением своего поведения? "
-            "Ответь одним словом: 'да' или 'нет'."
+            "Ты — эксперт по коммуникации. Оцени, насколько искренним и аргументированным является извинение пользователя. "
+            "Учитывай: признание ошибки, объяснение причин, предложение исправиться, отсутствие оправданий. "
+            "Верни только число от 0 до 100, где 0 — «не извинение», 100 — «идеальное извинение»."
         )},
         {"role": "user", "content": user_message}
     ]
     try:
-        result = await ai_request(apology_prompt, max_tokens=5)
-        return "да" in result.strip().lower()
+        response = await ai_request(prompt, max_tokens=10)
+        score = int(response.strip())
+        return max(0, min(100, score))
     except:
-        return False
+        return 0
 
 def get_dynamic_tokens(interest: int) -> int:
     base = 40
@@ -269,9 +274,7 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
         "Ты не проявляешь симпатию сразу. Сначала оцениваешь собеседника. "
         "Можешь быть немного холодна, отвечать коротко. Интерес растёт постепенно. "
         "Всегда заканчивай предложения, не обрывай слова на полуслове. "
-        "Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS. "
-        "Если интерес упадёт до 10 или ниже, ты можешь завершить разговор, сказав что-то вроде 'Извини, я не хочу продолжать'. "
-        "После этого ты перестаёшь отвечать на сообщения, если только пользователь не пришлёт искренние извинения или очень убедительное объяснение."
+        "Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."
     )
 
     if persona_type == "type_flirty":
@@ -333,7 +336,8 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
         personas=[persona],
         history=system_messages,
         persona_states=persona_states,
-        chat_ended=False  # флаг, показывающий, завершил ли персонаж чат
+        banned=False,
+        ban_time=None
     )
 
     if first_message:
@@ -457,8 +461,7 @@ async def start_custom(call: types.CallbackQuery, state: FSMContext):
         scenario="custom",
         personas=personas,
         history=system_messages,
-        persona_states={},
-        chat_ended=False
+        persona_states={}
     )
     persona_list = "\n".join([f"• {p['name']}" for p in personas])
     await call.message.edit_text(
@@ -484,40 +487,32 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
     history = data["history"]
     personas = data["personas"]
     persona_states = data.get("persona_states", {})
-    chat_ended = data.get("chat_ended", False)
-    scenario = data.get("scenario", "")
+    banned = data.get("banned", False)
+    ban_time = data.get("ban_time")
 
-    user_msg = msg.text
-
-    # Если чат был завершён персонажем, проверяем, не извинение ли это
-    if chat_ended:
-        is_apology = await check_apology(user_msg)
-        if not is_apology:
-            await msg.answer("😶 Ваш собеседник не отвечает. Возможно, он обиделся и ждёт извинений.")
+    # Если персонаж «ушёл», проверяем возможность восстановления
+    if banned:
+        if ban_time:
+            time_passed = datetime.utcnow() - ban_time
+            if time_passed < timedelta(minutes=BAN_TIMEOUT_MINUTES):
+                await msg.answer("Персонаж больше не отвечает. Возможно, стоит подождать некоторое время и попробовать извиниться позже.")
+                return
+        # Оцениваем извинение
+        apology_score = await evaluate_apology(msg.text)
+        if apology_score >= 70:
+            # Частично восстанавливаем интерес
+            for p in personas:
+                persona_states[p["name"]] = {"interest": 40, "mood": "настороженное"}
+            await state.update_data(banned=False, ban_time=None, persona_states=persona_states)
+            await msg.answer("Персонаж принимает ваши извинения, но всё ещё насторожен.")
             return
         else:
-            # Восстанавливаем интерес до 25 и сбрасываем флаг завершения
-            for p_name in persona_states:
-                persona_states[p_name]["interest"] = 25
-                persona_states[p_name]["mood"] = "нейтральное"
-            await state.update_data(chat_ended=False, persona_states=persona_states)
-            await msg.answer("Ваш собеседник готов вас выслушать.")
-            # Добавляем системное сообщение о возобновлении
-            history.append({"role": "system", "content": "Пользователь принёс извинения. Ты решил дать ему второй шанс. Ответь коротко, сдержанно."})
-            await state.update_data(history=history)
-            # Продолжаем обработку, персонаж ответит ниже
-    else:
-        # Если чат не завершён, проверяем, не упал ли интерес до критического уровня
-        for p_name, state_val in persona_states.items():
-            if state_val.get("interest", 50) <= 10:
-                # Персонаж завершает разговор
-                history.append({"role": "assistant", "content": "Извини, я не хочу продолжать этот разговор."})
-                await state.update_data(chat_ended=True, history=history)
-                await msg.answer("Извини, я не хочу продолжать этот разговор.")
-                return
+            await msg.answer("Ваши слова не достаточно убедительны. Попробуйте позже.")
+            return
 
-    # Обычная обработка сообщения
+    user_msg = msg.text
     history.append({"role": "user", "content": user_msg})
+
     history = await summarize_context(history)
 
     responses = []
@@ -557,6 +552,13 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         if persona_states and p_name in persona_states:
             new_state = await update_persona_state(current_state, user_msg)
             persona_states[p_name] = new_state
+
+            # Если интерес упал до нуля — персонаж уходит
+            if new_state["interest"] <= 0:
+                farewell = "Мне больше нечего сказать. Прощай."
+                await msg.answer(f"**{p_name}:** {farewell}")
+                await state.update_data(banned=True, ban_time=datetime.utcnow())
+                return
 
         responses.append(f"**{p_name}:** {reply}")
 

@@ -58,6 +58,8 @@ SCENARIOS = {
     }
 }
 
+BAN_TIMEOUT_MINUTES = 10
+
 # ---------- Клавиатуры ----------
 def custom_persona_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -150,10 +152,6 @@ async def update_persona_state(current_state, user_message):
         return current_state
 
 async def evaluate_apology(user_message: str) -> int:
-    """
-    Оценивает, насколько убедительно извинение пользователя.
-    Возвращает оценку от 0 до 100, где 100 — идеальное извинение.
-    """
     prompt = [
         {"role": "system", "content": (
             "Ты — эксперт по коммуникации. Оцени, насколько искренним и аргументированным является извинение пользователя. "
@@ -490,17 +488,14 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
     banned = data.get("banned", False)
     ban_time = data.get("ban_time")
 
-    # Если персонаж «ушёл», проверяем возможность восстановления
     if banned:
         if ban_time:
             time_passed = datetime.utcnow() - ban_time
             if time_passed < timedelta(minutes=BAN_TIMEOUT_MINUTES):
                 await msg.answer("Персонаж больше не отвечает. Возможно, стоит подождать некоторое время и попробовать извиниться позже.")
                 return
-        # Оцениваем извинение
         apology_score = await evaluate_apology(msg.text)
         if apology_score >= 70:
-            # Частично восстанавливаем интерес
             for p in personas:
                 persona_states[p["name"]] = {"interest": 40, "mood": "настороженное"}
             await state.update_data(banned=False, ban_time=None, persona_states=persona_states)
@@ -553,7 +548,6 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
             new_state = await update_persona_state(current_state, user_msg)
             persona_states[p_name] = new_state
 
-            # Если интерес упал до нуля — персонаж уходит
             if new_state["interest"] <= 0:
                 farewell = "Мне больше нечего сказать. Прощай."
                 await msg.answer(f"**{p_name}:** {farewell}")
@@ -588,7 +582,6 @@ async def finish_social_analyze(msg: types.Message, state: FSMContext):
 
     await state.clear()
 
-    # Сохраняем отношения в БД перед очисткой
     if scenario_name in ("date", "internet_meeting"):
         async with async_session() as session:
             user = await get_or_create_user(session, msg.from_user.id)

@@ -2,7 +2,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import and_
-from .models import User, Interview, UserStats, ChatQueue, ActiveChat
+from .models import User, Interview, UserStats, ChatQueue, ActiveChat, Relationship
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str = None):
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -98,17 +98,14 @@ async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int):
     return result.scalar_one_or_none()
 
 async def find_available_user(session: AsyncSession, exclude_user_id: int):
-    """Находит пользователя, у которого allow_random_chat=1, который не в активном чате и не в очереди."""
     result = await session.execute(
         select(User).where(User.allow_random_chat == 1, User.telegram_id != exclude_user_id)
     )
     candidates = result.scalars().all()
     for user in candidates:
-        # Проверяем активный чат
         chat = await get_active_chat_by_user(session, user.telegram_id)
         if chat:
             continue
-        # Проверяем очередь
         queue_entry = await session.execute(select(ChatQueue).where(ChatQueue.user_id == user.id))
         if queue_entry.scalar_one_or_none():
             continue
@@ -133,3 +130,26 @@ async def cleanup_expired_queue(session: AsyncSession, timeout_minutes: int = 5,
             except Exception:
                 pass
     await session.commit()
+
+# Новые функции для отношений
+async def get_relationship(session, user_id: int, scenario_key: str):
+    result = await session.execute(
+        select(Relationship).where(and_(Relationship.user_id == user_id, Relationship.scenario_key == scenario_key))
+    )
+    return result.scalar_one_or_none()
+
+async def save_relationship(session, user_id: int, scenario_key: str,
+                           interest: float, trust: float, romance: float,
+                           last_history_summary: str = None):
+    rel = await get_relationship(session, user_id, scenario_key)
+    if not rel:
+        rel = Relationship(user_id=user_id, scenario_key=scenario_key)
+        session.add(rel)
+    rel.interest = interest
+    rel.trust = trust
+    rel.romance = romance
+    rel.interaction_count += 1
+    rel.last_history_summary = last_history_summary
+    rel.last_interaction = datetime.utcnow()
+    await session.commit()
+    return rel

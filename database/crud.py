@@ -131,14 +131,13 @@ async def cleanup_expired_queue(session: AsyncSession, timeout_minutes: int = 5,
                 pass
     await session.commit()
 
-# Новые функции для отношений
-async def get_relationship(session, user_id: int, scenario_key: str):
+async def get_relationship(session: AsyncSession, user_id: int, scenario_key: str):
     result = await session.execute(
         select(Relationship).where(and_(Relationship.user_id == user_id, Relationship.scenario_key == scenario_key))
     )
     return result.scalar_one_or_none()
 
-async def save_relationship(session, user_id: int, scenario_key: str,
+async def save_relationship(session: AsyncSession, user_id: int, scenario_key: str,
                            interest: float, trust: float, romance: float,
                            last_history_summary: str = None):
     rel = await get_relationship(session, user_id, scenario_key)

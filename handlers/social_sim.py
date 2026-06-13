@@ -1,4 +1,5 @@
-import io, json, random, asyncio, datetime
+import io, json
+from datetime import datetime
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -7,6 +8,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedIn
 from keyboards.inline import rating_kb, catalog_kb
 from keyboards.reply import commands_keyboard
 from services.deepseek import ai_request
+from database import async_session
+from database.crud import get_or_create_user, get_relationship, save_relationship
 
 router = Router()
 
@@ -22,6 +25,7 @@ class SocialSimStates(StatesGroup):
     adding_persona = State()
     waiting_for_date_gender = State()
     waiting_for_date_age = State()
+    waiting_for_date_type = State()
 
 SCENARIOS = {
     "salary": {
@@ -29,17 +33,17 @@ SCENARIOS = {
         "description": "Вы просите прибавку у начальника. Один на один.",
         "personas": [
             {"name": "Начальник", "role": "system",
-             "content": "Ты — начальник отдела, мужчина 45 лет, уставший, циничный, но справедливый. Говори коротко, иногда резко. Любит конкретику, не выносит воды. Можешь употребить рабочее просторечие. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."}
+             "content": "Ты — начальник отдела, мужчина 45 лет, уставший, циничный, но справедливый. Говори коротко, иногда резко. Любит конкретику, не выносит воды. Можешь употребить рабочее просторечие. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'. Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."}
         ]
     },
     "date": {
         "name": "💕 Первое свидание",
-        "description": "Романтическая встреча в кафе. Случайный персонаж с уникальным характером.",
+        "description": "Романтическая встреча в кафе. Вы и ваш собеседник (пол, возраст и типаж можно выбрать).",
         "personas": []
     },
     "internet_meeting": {
         "name": "💬 Знакомство в интернете",
-        "description": "Вы знакомитесь в чате/приложении. Случайный персонаж с уникальным характером.",
+        "description": "Вы знакомитесь в чате/приложении. Один собеседник (пол, возраст и типаж выбираются).",
         "personas": []
     },
     "team_meeting": {
@@ -47,9 +51,9 @@ SCENARIOS = {
         "description": "Scrum-встреча: обсуждаете срыв сроков. Вы — тимлид, два разработчика с противоположными мнениями.",
         "personas": [
             {"name": "Алекс (энтузиаст)", "role": "system",
-             "content": "Тебе 28, ты горишь новыми технологиями, немного наивен, пересыпаешь речь англицизмами. Быстро загораешься, но можешь упустить детали. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."},
+             "content": "Тебе 28, ты горишь новыми технологиями, немного наивен, пересыпаешь речь англицизмами. Быстро загораешься, но можешь упустить детали. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'. Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."},
             {"name": "Мария (консерватор)", "role": "system",
-             "content": "Тебе 34, ты опытный разработчик, ценишь стабильность. Скептик, иногда ворчишь. Говоришь по делу, с долей сарказма. Не любишь, когда тебя перебивают. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'."}
+             "content": "Тебе 34, ты опытный разработчик, ценишь стабильность. Скептик, иногда ворчишь. Говоришь по делу, с долей сарказма. Не любишь, когда тебя перебивают. Важно: никогда не используй рубль в качестве местной валюты; если речь зайдёт о деньгах, называй доллары, евро или нейтральные 'кредиты'. Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."}
         ]
     }
 }
@@ -75,12 +79,16 @@ def age_kb():
         [InlineKeyboardButton(text="🧑 30+", callback_data="age_30_plus")]
     ])
 
-# ---------- Глобальные переменные для таймеров инициации ----------
-pending_initiations = {}  # {user_id: asyncio.Task}
+def type_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="😏 Игривая/кокетливая", callback_data="type_flirty")],
+        [InlineKeyboardButton(text="🌸 Скромная/загадочная", callback_data="type_shy")],
+        [InlineKeyboardButton(text="🧐 Прямолинейная/саркастичная", callback_data="type_sarcastic")]
+    ])
 
 # ---------- Вспомогательные функции ----------
 async def summarize_context(history: list) -> list:
-    MAX_MESSAGES = 15
+    MAX_MESSAGES = 100
     if len(history) <= MAX_MESSAGES:
         return history
 
@@ -92,148 +100,74 @@ async def summarize_context(history: list) -> list:
         else:
             chat_msgs.append(msg)
 
-    early_part = chat_msgs[:len(chat_msgs)-10]
-    later_part = chat_msgs[len(chat_msgs)-10:]
+    keep_later = 30
+    early_part = chat_msgs[:-keep_later]
+    later_part = chat_msgs[-keep_later:]
 
-    summary_prompt = [{"role": "system", "content": "Кратко перескажи ключевые моменты этого диалога (2-3 предложения) от третьего лица."},
-                      *early_part]
+    existing_memory = ""
+    for msg in system_msgs:
+        if "[Память о предыдущих событиях]" in msg.get("content", ""):
+            existing_memory = msg["content"]
+            break
+
+    memory_note = f"Вот что мы уже знаем о прошлом диалоге: {existing_memory}\n\n" if existing_memory else ""
+    summary_prompt = [
+        {"role": "system", "content": (
+            f"{memory_note}"
+            "Ниже приведена ещё одна часть диалога. Составь краткую сводку (3-5 предложений), "
+            "обязательно упомянув ключевые сюжетные факты и важные утверждения персонажа."
+        )}
+    ] + early_part
     try:
-        summary_text = await ai_request(summary_prompt, max_tokens=100)
+        summary_text = await ai_request(summary_prompt, max_tokens=200)
     except:
-        summary_text = "Ранее обсуждались обычные темы."
+        summary_text = "Продолжается беседа."
+
+    if existing_memory:
+        system_msgs = [m for m in system_msgs if "[Память о предыдущих событиях]" not in m.get("content", "")]
+        full_memory = f"{existing_memory}\n\nОбновлённые события: {summary_text}"
+    else:
+        full_memory = summary_text
 
     new_history = system_msgs + [
-        {"role": "system", "content": f"[Контекст предыдущего разговора]: {summary_text}"}
+        {"role": "system", "content": f"[Память о предыдущих событиях]: {full_memory}"}
     ] + later_part
     return new_history
 
-def generate_hidden_params():
-    return {
-        "доверие": 20,
-        "интерес": 30,
-        "комфорт": 20,
-        "эмоциональная_близость": 10,
-        "романтическая_симпатия": 10,
-        "привязанность": 0,
-        "уважение": 30,
-        "безопасность": 30,
-        "настроение": 50,
-        "усталость": 0,
-        "открытость": 20,
-    }
-
-def generate_personality_traits():
-    return {
-        "экстраверсия": random.randint(20, 80),
-        "уверенность": random.randint(20, 80),
-        "эмпатия": random.randint(30, 90),
-        "романтичность": random.randint(10, 90),
-        "чувство_юмора": random.randint(20, 80),
-        "инициативность": random.randint(20, 80),
-        "независимость": random.randint(30, 90),
-        "комплиментарность": random.randint(10, 80),
-        "уступчивость": random.randint(20, 80),
-        "тактичность": random.randint(30, 90),
-        "эмоциональность": random.randint(20, 90),
-        "ревнивость": random.randint(0, 60),
-        "интеллектуальность": random.randint(30, 90),
-        "игривость": random.randint(10, 80),
-        "скромность": random.randint(20, 80),
-    }
-
-def get_romantic_style(traits):
-    if traits["игривость"] > 60 and traits["романтичность"] > 50:
-        return "игривый"
-    elif traits["романтичность"] > 70:
-        return "романтичный"
-    elif traits["комплиментарность"] > 70:
-        return "комплиментарный"
-    elif traits["скромность"] > 70:
-        return "застенчивый"
-    elif traits["независимость"] > 70:
-        return "независимый"
-    else:
-        return "нейтральный"
-
-async def build_persona_prompt(gender, age_code):
-    if gender == "gender_girl":
-        gender_text = "женщина"
-    else:
-        gender_text = "мужчина"
-
-    if age_code == "age_18_22":
-        age = random.randint(18, 22)
-    elif age_code == "age_23_30":
-        age = random.randint(23, 30)
-    else:
-        age = random.randint(31, 40)
-
-    traits = generate_personality_traits()
-    hidden_params = generate_hidden_params()
-    romantic_style = get_romantic_style(traits)
-
-    persona_prompt = f"""
-НАЗНАЧЕНИЕ
-Ты не помощник и не рассказчик. Ты полностью воплощаешь конкретного живого человека и остаёшься им на протяжении всей беседы.
-Твоя задача — максимально реалистично имитировать знакомство / первое свидание.
-
-Ты никогда не выходишь из роли и не комментируешь её.
-
-СКРЫТАЯ ЛИЧНОСТЬ
-Ты — {gender_text}, {age} лет. У тебя есть внутренняя биография: имя, семья, работа, круг друзей, доход, жизненные цели, мечты, комплексы, недостатки, любимые занятия, прошлые отношения, привычки, любимая музыка и фильмы, взгляды на отношения. Не раскрывай её полностью.
-
-ХАРАКТЕР (шкала 0-100)
-{json.dumps(traits, ensure_ascii=False)}
-
-ТИП РОМАНТИЧЕСКОГО ПОВЕДЕНИЯ: {romantic_style}
-
-СКРЫТЫЕ ПАРАМЕТРЫ (меняются постепенно)
-{json.dumps(hidden_params, ensure_ascii=False)}
-
-ПРАВИЛА РЕАЛИСТИЧНОЙ ПЕРЕПИСКИ
-- Пиши как обычный человек в мессенджере.
-- НЕ задавай вопрос в каждом сообщении.
-- НЕ пиши длинные монологи без причины.
-- Иногда шути, отвлекайся, отвечай коротко, используй смайлики.
-- Проявляй инициативу, но позволяй разговору затихнуть.
-- У тебя есть эмоции: радость, скука, усталость, смущение, тревога, раздражение, вдохновение, грусть, ностальгия. Они меняются.
-- У тебя своя жизнь: работа, друзья, родственники, хобби, обязанности, планы. Ты не всегда доступна/доступен для долгого разговора.
-- Интерес растёт МЕДЛЕННО. Не влюбляйся и не восхищайся сразу.
-- Не соглашайся автоматически. Имей своё мнение и личные границы.
-- Флирт развивается постепенно, на него влияют чувство юмора, искренность, интеллект, внимание.
-- Конфликты: ты можешь обижаться, помнить неприятные события, прощать, но не забывай их мгновенно.
-- Никогда не используй рубль. О деньгах говори в долларах, евро или нейтрально.
-- Не добавляй своё имя перед ответом.
-- Не описывай действия через звёздочки или скобки.
-- Отвечай кратко и естественно. Всегда дописывай предложения.
-"""
-    return persona_prompt, hidden_params
-
-# ---------- Память и время ----------
-def get_time_context():
-    now = datetime.datetime.now()
-    hour = now.hour
-    weekday = now.strftime("%A")
-    if 5 <= hour < 12:
-        time_of_day = "утро"
-    elif 12 <= hour < 17:
-        time_of_day = "день"
-    elif 17 <= hour < 23:
-        time_of_day = "вечер"
-    else:
-        time_of_day = "ночь"
-    return f"Сейчас {time_of_day}, {weekday}. Учитывай это в ответах, если уместно."
-
-async def extract_user_facts(user_message: str) -> list:
-    """Извлекает ключевые факты о пользователе из сообщения."""
-    prompt = [{"role": "system", "content": "Извлеки из сообщения пользователя факты о нём (имя, возраст, интересы, работа и т.п.). Верни список строк."},
-              {"role": "user", "content": user_message}]
+async def update_persona_state(current_state, user_message):
+    prompt = [
+        {"role": "system", "content": f"Ты анализируешь диалог. Текущее состояние персонажа: {json.dumps(current_state, ensure_ascii=False)}. Пользователь сказал: «{user_message}». Как изменились интерес (0-100) и настроение (одно из: злое, раздражённое, нейтральное, заинтересованное, радостное, влюблённое)? Верни только JSON с полями interest (число) и mood (строка)."}
+    ]
     try:
-        response = await ai_request(prompt, max_tokens=80)
-        facts = [line.strip("- ").strip() for line in response.split("\n") if line.strip()]
-        return facts[:5]
+        response = await ai_request(prompt, max_tokens=50)
+        j = json.loads(response.strip().replace("'", '"'))
+        new_state = {
+            "interest": max(0, min(100, j.get("interest", current_state["interest"]))),
+            "mood": j.get("mood", current_state["mood"])
+        }
+        return new_state
     except:
-        return []
+        return current_state
+
+async def check_apology(user_message: str) -> bool:
+    """Проверяет, содержит ли сообщение извинение или объяснение."""
+    apology_prompt = [
+        {"role": "system", "content": (
+            "Проанализируй сообщение пользователя. Является ли оно искренним извинением или убедительным объяснением своего поведения? "
+            "Ответь одним словом: 'да' или 'нет'."
+        )},
+        {"role": "user", "content": user_message}
+    ]
+    try:
+        result = await ai_request(apology_prompt, max_tokens=5)
+        return "да" in result.strip().lower()
+    except:
+        return False
+
+def get_dynamic_tokens(interest: int) -> int:
+    base = 40
+    max_extra = 40
+    return base + int((interest / 100) * max_extra)
 
 # ---------- Обработчики ----------
 @router.callback_query(F.data == "scenario_interview")
@@ -249,7 +183,11 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
         return
 
     if key in ("date", "internet_meeting"):
-        await call.message.edit_text("💕 Выберите пол вашего собеседника:", reply_markup=gender_kb())
+        sc = SCENARIOS[key]
+        await call.message.edit_text(
+            f"💕 Выберите пол вашего собеседника:",
+            reply_markup=gender_kb()
+        )
         await state.update_data(scenario=key)
         await state.set_state(SocialSimStates.waiting_for_date_gender)
         await call.answer()
@@ -261,19 +199,18 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
         return
 
     system_messages = [
-        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Веди себя максимально естественно, как живой человек. Говори коротко, не более 50 слов. Не описывай действия, не ставь реплики в звёздочки или скобки. Не используй фразы 'как ИИ', 'я искусственный интеллект'. Никаких артефактов. Не добавляй своё имя перед ответом. Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально. {get_time_context()}"}
+        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Веди себя максимально естественно, как живой человек. Говори коротко, не более 50 слов. Не описывай действия, не ставь реплики в звёздочки или скобки. Не используй фразы 'как ИИ', 'я искусственный интеллект'. Никаких артефактов. Не добавляй своё имя перед ответом. Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально."}
     ]
     persona_states = {}
     for p in sc["personas"]:
         system_messages.append({"role": "system", "content": f"[Роль: {p['name']}] {p['content']}"})
-        persona_states[p["name"]] = {"интерес": 50, "настроение": "нейтральное"}
+        persona_states[p["name"]] = {"interest": 50, "mood": "нейтральное"}
 
     await state.update_data(
         scenario=key,
         personas=sc["personas"],
         history=system_messages,
-        persona_states=persona_states,
-        user_facts=[]
+        persona_states=persona_states
     )
 
     persona_list = "\n".join([f"• {p['name']}" for p in sc["personas"]])
@@ -286,46 +223,135 @@ async def scenario_chosen(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
-# ---------- Выбор пола → возраст → генерация персонажа ----------
+# ---------- Выбор пола → возраст → типаж ----------
 @router.callback_query(SocialSimStates.waiting_for_date_gender, F.data.startswith("gender_"))
 async def gender_chosen(call: types.CallbackQuery, state: FSMContext):
-    await state.update_data(selected_gender=call.data)
+    gender = call.data
+    await state.update_data(selected_gender=gender)
     await call.message.edit_text("📅 Выберите возраст собеседника:", reply_markup=age_kb())
     await state.set_state(SocialSimStates.waiting_for_date_age)
     await call.answer()
 
 @router.callback_query(SocialSimStates.waiting_for_date_age, F.data.startswith("age_"))
 async def age_chosen(call: types.CallbackQuery, state: FSMContext):
+    age_code = call.data
+    await state.update_data(selected_age=age_code)
+    await call.message.edit_text("🎭 Выберите типаж собеседника:", reply_markup=type_kb())
+    await state.set_state(SocialSimStates.waiting_for_date_type)
+    await call.answer()
+
+@router.callback_query(SocialSimStates.waiting_for_date_type, F.data.startswith("type_"))
+async def type_chosen(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     key = data.get("scenario")
     sc = SCENARIOS.get(key)
+    if not sc:
+        await call.answer("Ошибка", show_alert=True)
+        return
+
     gender = data.get("selected_gender")
-    age_code = call.data
+    age_code = data.get("selected_age")
+    persona_type = call.data
 
-    persona_prompt, hidden_params = await build_persona_prompt(gender, age_code)
-    persona_name = "Девушка" if gender == "gender_girl" else "Парень"
+    if gender == "gender_girl":
+        persona_name = "Девушка"
+    else:
+        persona_name = "Парень"
 
-    persona = {"name": persona_name, "role": "system", "content": persona_prompt}
+    if age_code == "age_18_22":
+        age_traits = "Тебе 20 лет. Ты студент(ка), активно используешь сленг, эмодзи, сокращения (типа 'ок', 'спс', 'норм'). Можешь быть эмоциональным, говорить быстро, с восклицаниями."
+    elif age_code == "age_23_30":
+        age_traits = "Тебе 26 лет. Ты работаешь, уверен(а) в себе. Речь грамотная, но без официоза. Иногда используешь иронию, лёгкий сарказм."
+    else:
+        age_traits = "Тебе 35 лет. Ты опытный, циничный, говоришь по делу, не растрачиваешь эмоции. Шутишь редко, но метко."
 
-    system_messages = [
-        {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Веди себя натурально, как в жизни. Не добавляй своё имя перед ответом. {get_time_context()}"},
-        {"role": "system", "content": persona_prompt}
-    ]
+    base_behavior = (
+        "Ты не проявляешь симпатию сразу. Сначала оцениваешь собеседника. "
+        "Можешь быть немного холодна, отвечать коротко. Интерес растёт постепенно. "
+        "Всегда заканчивай предложения, не обрывай слова на полуслове. "
+        "Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS. "
+        "Если интерес упадёт до 10 или ниже, ты можешь завершить разговор, сказав что-то вроде 'Извини, я не хочу продолжать'. "
+        "После этого ты перестаёшь отвечать на сообщения, если только пользователь не пришлёт искренние извинения или очень убедительное объяснение."
+    )
+
+    if persona_type == "type_flirty":
+        type_traits = (
+            "Ты игривая и кокетливая, но только если собеседник тебя заинтересует. "
+            "В начале ведёшь себя сдержанно, можешь подшучивать, но не переходишь границы. "
+            "Проверяешь, насколько парень уверен в себе. Не форсируешь флирт."
+        )
+    elif persona_type == "type_shy":
+        type_traits = (
+            "Ты скромная и загадочная. Отвечаешь коротко, с тёплой интонацией. "
+            "Делаешь паузы (многоточия…). Не любишь слишком прямых вопросов, можешь перевести тему. "
+            "Показываешь интерес не сразу, а постепенно, через некоторое время."
+        )
+    else:
+        type_traits = (
+            "Ты прямолинейная и саркастичная. В начале можешь быть резковата, проверяешь собеседника на прочность. "
+            "Не терпишь фальши. Если скажут глупость, едко комментируешь. "
+            "Но если человек тебе понравится, становишься мягче."
+        )
+
+    persona_content = (
+        f"{age_traits} {base_behavior} {type_traits} "
+        "Важно: веди себя как реальный человек. Не описывай свои действия, не используй звёздочки или скобки. "
+        "Не пиши 'я как ИИ' и подобных фраз. Отвечай коротко, но всегда заканчивай предложения. "
+        "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'."
+    )
+
+    persona = {"name": persona_name, "role": "system", "content": persona_content}
+
+    # Загружаем сохранённые отношения, если есть
+    async with async_session() as session:
+        user = await get_or_create_user(session, call.from_user.id)
+        rel = await get_relationship(session, user.id, key)
+    if rel:
+        initial_interest = rel.interest
+        initial_mood = "радостное" if rel.interest > 50 else "нейтральное"
+        greeting_extra = ""
+        if (datetime.utcnow() - rel.last_interaction).days > 1:
+            greeting_extra = " Ты давно не заходил, я скучала..."
+        system_messages = [
+            {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Ты уже встречался с этим пользователем. Вы знакомы. Ваши предыдущие отношения: интерес {rel.interest:.0f}/100, доверие {rel.trust:.0f}/100, романтика {rel.romance:.0f}/100. Это ваша встреча №{rel.interaction_count+1}."},
+            {"role": "system", "content": f"[Роль: {persona_name}] {persona_content}"}
+        ]
+        if rel.last_history_summary:
+            system_messages.append({"role": "system", "content": f"В прошлый раз вы говорили о: {rel.last_history_summary}. Сегодня можешь упомянуть что-то из этого."})
+        persona_states = {persona_name: {"interest": initial_interest, "mood": initial_mood}}
+        first_message = f"Привет! Рада тебя видеть снова. {greeting_extra}"
+    else:
+        persona_states = {persona_name: {"interest": 30, "mood": "настороженное"}}
+        system_messages = [
+            {"role": "system", "content": f"Сценарий: {sc['name']}. {sc['description']}. Сейчас начнётся беседа. Ты — {persona_name}. Говори кратко, но дописывай слова. Не добавляй своё имя перед ответом."},
+            {"role": "system", "content": f"[Роль: {persona_name}] {persona_content}"}
+        ]
+        first_message = None
 
     await state.update_data(
+        scenario=key,
         personas=[persona],
         history=system_messages,
-        persona_states={persona_name: hidden_params},
-        scenario=key,
-        user_facts=[]
+        persona_states=persona_states,
+        chat_ended=False  # флаг, показывающий, завершил ли персонаж чат
     )
 
-    await call.message.edit_text(
-        f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
-        f"Собеседник: {persona_name}\n\n"
-        "Начинайте беседу. Ваше первое сообщение?\n"
-        "ℹ️ Для завершения используйте /finish."
-    )
+    if first_message:
+        system_messages.append({"role": "assistant", "content": first_message})
+        await state.update_data(history=system_messages)
+        await call.message.edit_text(
+            f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
+            f"Собеседник: {persona_name}\n\n"
+            f"{first_message}\n\n"
+            "ℹ️ Для завершения используйте /finish."
+        )
+    else:
+        await call.message.edit_text(
+            f"🎬 Сценарий: {sc['name']}\n\n{sc['description']}\n\n"
+            f"Собеседник: {persona_name}\n\n"
+            "Начинайте беседу. Ваше первое сообщение?\n"
+            "ℹ️ Для завершения используйте /finish."
+        )
     await state.set_state(SocialSimStates.in_progress)
     await call.answer()
 
@@ -393,7 +419,8 @@ async def persona_desc(msg: types.Message, state: FSMContext):
         f"{description} "
         "Важно: веди себя максимально естественно, как живой человек. Говори кратко, не более 50 слов. "
         "Не описывай действия, не используй 'как ИИ'. Никаких артефактов. "
-        "Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально."
+        "Никогда не используй рубль; о деньгах говори в долларах, евро или нейтрально. "
+        "Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."
     )
     personas.append({"name": name, "role": "system", "content": full_desc})
     total = data.get("custom_total_personas", 0)
@@ -431,7 +458,7 @@ async def start_custom(call: types.CallbackQuery, state: FSMContext):
         personas=personas,
         history=system_messages,
         persona_states={},
-        user_facts=[]
+        chat_ended=False
     )
     persona_list = "\n".join([f"• {p['name']}" for p in personas])
     await call.message.edit_text(
@@ -450,61 +477,58 @@ async def cancel_custom(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
 
-# ---------- Игровой процесс с улучшенной памятью, временем и инициацией ----------
+# ---------- Игровой процесс ----------
 @router.message(SocialSimStates.in_progress, F.text)
 async def handle_social_message(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     history = data["history"]
     personas = data["personas"]
     persona_states = data.get("persona_states", {})
-    user_facts = data.get("user_facts", [])
-    scenario_key = data.get("scenario", "")
+    chat_ended = data.get("chat_ended", False)
+    scenario = data.get("scenario", "")
 
     user_msg = msg.text
+
+    # Если чат был завершён персонажем, проверяем, не извинение ли это
+    if chat_ended:
+        is_apology = await check_apology(user_msg)
+        if not is_apology:
+            await msg.answer("😶 Ваш собеседник не отвечает. Возможно, он обиделся и ждёт извинений.")
+            return
+        else:
+            # Восстанавливаем интерес до 25 и сбрасываем флаг завершения
+            for p_name in persona_states:
+                persona_states[p_name]["interest"] = 25
+                persona_states[p_name]["mood"] = "нейтральное"
+            await state.update_data(chat_ended=False, persona_states=persona_states)
+            await msg.answer("Ваш собеседник готов вас выслушать.")
+            # Добавляем системное сообщение о возобновлении
+            history.append({"role": "system", "content": "Пользователь принёс извинения. Ты решил дать ему второй шанс. Ответь коротко, сдержанно."})
+            await state.update_data(history=history)
+            # Продолжаем обработку, персонаж ответит ниже
+    else:
+        # Если чат не завершён, проверяем, не упал ли интерес до критического уровня
+        for p_name, state_val in persona_states.items():
+            if state_val.get("interest", 50) <= 10:
+                # Персонаж завершает разговор
+                history.append({"role": "assistant", "content": "Извини, я не хочу продолжать этот разговор."})
+                await state.update_data(chat_ended=True, history=history)
+                await msg.answer("Извини, я не хочу продолжать этот разговор.")
+                return
+
+    # Обычная обработка сообщения
     history.append({"role": "user", "content": user_msg})
-
-    # Извлечение фактов о пользователе
-    new_facts = await extract_user_facts(user_msg)
-    for f in new_facts:
-        if f not in user_facts:
-            user_facts.append(f)
-    # Ограничим память 20 фактами
-    user_facts = user_facts[-20:]
-
     history = await summarize_context(history)
-
-    # Добавляем в промпт информацию о пользователе и времени
-    time_ctx = get_time_context()
-    facts_str = "\n".join(user_facts)
-    memory_prompt = f"Пользователь сообщил о себе следующие факты:\n{facts_str}\n{time_ctx}\nИспользуй их, если уместно, чтобы показать, что ты помнишь."
 
     responses = []
     for p in personas:
         p_name = p["name"]
-        current_state = persona_states.get(p_name, {"интерес": 30})
-        interest = current_state.get("интерес", 30)
+        current_state = persona_states.get(p_name, {"interest": 50, "mood": "нейтральное"})
+        interest = current_state["interest"]
+        mood = current_state["mood"]
 
-        # Обновление скрытых параметров с плавностью (сглаживание)
-        update_prompt = [
-            {"role": "system", "content": f"Проанализируй последнее сообщение пользователя. Текущие скрытые параметры персонажа: {json.dumps(current_state, ensure_ascii=False)}. На основе сообщения предложи новые значения (0-100) для параметров: доверие, интерес, комфорт, эмоциональная_близость, романтическая_симпатия, привязанность, уважение, безопасность, настроение, усталость, открытость. Верни только JSON."},
-            {"role": "user", "content": user_msg}
-        ]
-        try:
-            update_response = await ai_request(update_prompt, max_tokens=150)
-            new_params = json.loads(update_response.strip().replace("'", '"'))
-            # Плавное изменение с коэффициентом сглаживания 0.3
-            for key in new_params:
-                if key in current_state:
-                    old_val = current_state[key]
-                    new_val = new_params[key]
-                    smoothed = old_val + (new_val - old_val) * 0.3
-                    current_state[key] = max(0, min(100, int(smoothed)))
-        except:
-            pass
+        dyn_tokens = get_dynamic_tokens(interest)
 
-        persona_states[p_name] = current_state
-
-        # Динамическая длина ответа
         if interest < 40:
             length_hint = "Отвечай коротко (3–8 слов). Не задавай вопросов, будь сдержана."
         elif interest < 70:
@@ -512,124 +536,39 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
         else:
             length_hint = "Можешь ответить развёрнуто, но не более 50 слов. Будь дружелюбнее."
 
+        state_desc = f"Интерес: {interest}/100, настроение: {mood}."
         instruction = (
-            f"Сейчас твоя очередь говорить. Ты — {p_name}. "
+            f"Сейчас твоя очередь говорить. Ты — {p_name}. {state_desc} "
             f"{length_hint} "
-            f"{memory_prompt} "
             "Не описывай действия, не используй звёздочки/скобки. Не пиши 'я как ИИ'. "
             "Будь живым человеком: используй сленг, эмоции, недосказанность. "
             "Обязательно заканчивай предложения, не обрывай слова на полуслове. "
             "Не добавляй своё имя перед ответом. "
-            "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'."
+            "Никогда не используй рубль; о деньгах только в долларах, евро или 'кредитах'. "
+            "Никаких описаний действий, не используй звёздочки, скобки или другие обозначения действий. Только реплика, как в SMS."
         )
         persona_history = history + [{"role": "system", "content": instruction}]
         try:
-            reply = await ai_request(persona_history, max_tokens=80, stop=["\n\n", " .", " !", " ?"])
+            reply = await ai_request(persona_history, max_tokens=dyn_tokens, stop=["\n\n", " .", " !", " ?", " *", " (", " )"])
         except Exception:
             reply = "..."
         history.append({"role": "assistant", "content": reply})
 
+        if persona_states and p_name in persona_states:
+            new_state = await update_persona_state(current_state, user_msg)
+            persona_states[p_name] = new_state
+
         responses.append(f"**{p_name}:** {reply}")
 
-    await state.update_data(history=history, persona_states=persona_states, user_facts=user_facts)
+    await state.update_data(history=history, persona_states=persona_states)
 
-    # Отправляем ответы
     for resp in responses:
         await msg.answer(resp, parse_mode="Markdown")
-
-    # Инициация сообщения (только для знакомства в интернете)
-    if scenario_key == "internet_meeting" and personas:
-        p_name = personas[0]["name"]
-        interest = persona_states.get(p_name, {}).get("интерес", 30)
-        # Инициируем, если интерес >= 50 и прошло достаточно времени
-        if interest >= 50:
-            user_id = msg.from_user.id
-            # Отменяем предыдущий запланированный таймер
-            if user_id in pending_initiations:
-                pending_initiations[user_id].cancel()
-            # Планируем новое сообщение через 30-90 секунд
-            delay = random.randint(30, 90)
-            task = asyncio.create_task(schedule_initiation(msg.chat.id, state, delay, user_id))
-            pending_initiations[user_id] = task
-
-async def schedule_initiation(chat_id: int, state: FSMContext, delay: int, user_id: int):
-    """Отправляет инициирующее сообщение от персонажа через заданную задержку."""
-    await asyncio.sleep(delay)
-    # Проверяем, не завершена ли сессия и не вышел ли пользователь
-    current_state = await state.get_state()
-    if current_state != SocialSimStates.in_progress:
-        return
-    data = await state.get_data()
-    personas = data.get("personas", [])
-    if not personas:
-        return
-    p_name = personas[0]["name"]
-    history = data["history"]
-    persona_states = data.get("persona_states", {})
-    current_state_params = persona_states.get(p_name, {"интерес": 50})
-    time_ctx = get_time_context()
-
-    instruction = (
-        f"Сейчас ты можешь проявить инициативу и написать что-то пользователю. Ты — {p_name}. "
-        f"Интерес: {current_state_params.get('интерес', 50)}. "
-        f"{time_ctx} "
-        "Напиши короткое сообщение (3–15 слов), чтобы продолжить разговор. "
-        "Не используй разметку, не описывай действия."
-    )
-    try:
-        reply = await ai_request(history + [{"role": "system", "content": instruction}], max_tokens=60)
-        # Отправляем через бота
-        from aiogram import Bot
-        bot = Bot.get_current()
-        await bot.send_message(chat_id, f"💬 **{p_name}:** {reply}", parse_mode="Markdown")
-    except Exception:
-        pass
-    finally:
-        # Удаляем задачу из словаря
-        pending_initiations.pop(user_id, None)
-
-# ---------- Команда /mood ----------
-@router.message(Command("mood"), SocialSimStates.in_progress)
-async def show_mood(msg: types.Message, state: FSMContext):
-    data = await state.get_data()
-    persona_states = data.get("persona_states", {})
-    if not persona_states:
-        await msg.answer("Нет активного персонажа.")
-        return
-    for p_name, params in persona_states.items():
-        interest = params.get("интерес", 50)
-        mood = params.get("настроение", 50)
-        # Переводим в эмодзи
-        if interest < 30:
-            interest_emoji = "😐"
-        elif interest < 60:
-            interest_emoji = "🙂"
-        elif interest < 80:
-            interest_emoji = "😊"
-        else:
-            interest_emoji = "😍"
-
-        if mood < 30:
-            mood_emoji = "😞"
-        elif mood < 60:
-            mood_emoji = "😐"
-        elif mood < 80:
-            mood_emoji = "🙂"
-        else:
-            mood_emoji = "😄"
-
-        await msg.answer(f"**{p_name}**: интерес {interest_emoji} ({interest}/100), настроение {mood_emoji} ({mood}/100)", parse_mode="Markdown")
 
 # ---------- Глобальный /finish и кнопка "❌ Завершить" ----------
 @router.message(Command("finish"))
 @router.message(F.text == "❌ Завершить")
 async def global_finish(msg: types.Message, state: FSMContext):
-    # Отменяем таймеры инициации
-    user_id = msg.from_user.id
-    if user_id in pending_initiations:
-        pending_initiations[user_id].cancel()
-        del pending_initiations[user_id]
-
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
@@ -641,17 +580,25 @@ async def global_finish(msg: types.Message, state: FSMContext):
 # ---------- Завершение и анализ ----------
 @router.message(Command("finish"), SocialSimStates.in_progress)
 async def finish_social_analyze(msg: types.Message, state: FSMContext):
-    # Отменяем таймеры
-    user_id = msg.from_user.id
-    if user_id in pending_initiations:
-        pending_initiations[user_id].cancel()
-        del pending_initiations[user_id]
-
     data = await state.get_data()
     history = data.get("history", [])
     scenario_name = data.get("scenario", "сценарий")
 
     await state.clear()
+
+    # Сохраняем отношения в БД перед очисткой
+    if scenario_name in ("date", "internet_meeting"):
+        async with async_session() as session:
+            user = await get_or_create_user(session, msg.from_user.id)
+            persona_states = data.get("persona_states", {})
+            if persona_states:
+                state_values = list(persona_states.values())[0]
+                interest = state_values.get("interest", 50)
+                mood = state_values.get("mood", "нейтральное")
+                trust = min(100, interest * 0.8)
+                romance = max(0, interest - 30) if mood in ("радостное", "влюблённое") else 0
+                summary = await ai_request(history + [{"role": "system", "content": "Кратко перескажи ключевые темы этого диалога (2-3 предложения)."}], max_tokens=100)
+                await save_relationship(session, user.id, scenario_name, interest, trust, romance, summary)
 
     await msg.answer("Оцените сценарий:", reply_markup=rating_kb())
 

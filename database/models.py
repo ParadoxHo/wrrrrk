@@ -10,7 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True, nullable=False)
     username = Column(String, nullable=True)
-    allow_random_chat = Column(Integer, default=0)  # 0 - выключено, 1 - включено
+    allow_random_chat = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     interviews = relationship("Interview", back_populates="user", lazy="dynamic")
     stats = relationship("UserStats", back_populates="user", uselist=False)
@@ -59,3 +59,16 @@ class ActiveChat(Base):
     user2_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     active = Column(Integer, default=1)
+
+class Relationship(Base):
+    __tablename__ = 'relationships'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    scenario_key = Column(String, nullable=False)   # 'date', 'internet_meeting'
+    interest = Column(Float, default=30.0)
+    trust = Column(Float, default=20.0)
+    romance = Column(Float, default=10.0)
+    interaction_count = Column(Integer, default=0)
+    last_history_summary = Column(Text)
+    last_interaction = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)

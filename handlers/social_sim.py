@@ -303,7 +303,6 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
 
     persona = {"name": persona_name, "role": "system", "content": persona_content}
 
-    # Загружаем сохранённые отношения, если есть
     async with async_session() as session:
         user = await get_or_create_user(session, call.from_user.id)
         rel = await get_relationship(session, user.id, key)
@@ -335,7 +334,8 @@ async def type_chosen(call: types.CallbackQuery, state: FSMContext):
         history=system_messages,
         persona_states=persona_states,
         banned=False,
-        ban_time=None
+        ban_time=None,
+        ban_notified=False
     )
 
     if first_message:
@@ -487,22 +487,27 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
     persona_states = data.get("persona_states", {})
     banned = data.get("banned", False)
     ban_time = data.get("ban_time")
+    ban_notified = data.get("ban_notified", False)
 
     if banned:
         if ban_time:
             time_passed = datetime.utcnow() - ban_time
             if time_passed < timedelta(minutes=BAN_TIMEOUT_MINUTES):
-                await msg.answer("Персонаж больше не отвечает. Возможно, стоит подождать некоторое время и попробовать извиниться позже.")
+                if not ban_notified:
+                    await msg.answer("Персонаж больше не отвечает. Возможно, стоит подождать некоторое время и попробовать извиниться позже.")
+                    await state.update_data(ban_notified=True)
                 return
         apology_score = await evaluate_apology(msg.text)
         if apology_score >= 70:
             for p in personas:
                 persona_states[p["name"]] = {"interest": 40, "mood": "настороженное"}
-            await state.update_data(banned=False, ban_time=None, persona_states=persona_states)
+            await state.update_data(banned=False, ban_time=None, ban_notified=False, persona_states=persona_states)
             await msg.answer("Персонаж принимает ваши извинения, но всё ещё насторожен.")
             return
         else:
-            await msg.answer("Ваши слова не достаточно убедительны. Попробуйте позже.")
+            if not ban_notified:
+                await msg.answer("Ваши слова не достаточно убедительны. Попробуйте позже.")
+                await state.update_data(ban_notified=True)
             return
 
     user_msg = msg.text
@@ -551,7 +556,7 @@ async def handle_social_message(msg: types.Message, state: FSMContext):
             if new_state["interest"] <= 0:
                 farewell = "Мне больше нечего сказать. Прощай."
                 await msg.answer(f"**{p_name}:** {farewell}")
-                await state.update_data(banned=True, ban_time=datetime.utcnow())
+                await state.update_data(banned=True, ban_time=datetime.utcnow(), ban_notified=False)
                 return
 
         responses.append(f"**{p_name}:** {reply}")
